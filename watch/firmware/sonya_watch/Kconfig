@@ -1,0 +1,2 @@
+# Sonya Watch - main config in main/Kconfig
+source "main/Kconfig"

@@ -1,0 +1,132 @@
+menu "Sonya Watch Configuration"
+
+    config REC_SECONDS
+        int "Recording duration (seconds)"
+        default 4
+        range 1 30
+        help
+            Fixed duration of audio recording after wake detection.
+
+    config AUDIO_SR
+        int "Audio sample rate (Hz)"
+        default 16000
+        help
+            I2S microphone sample rate.
+
+    config CHUNK_SIZE
+        int "BLE TX chunk payload size (bytes)"
+        default 180
+        range 20 244
+        help
+            Max payload size for AUDIO_CHUNK frames. BLE MTU typically 244.
+
+    choice WAKE_MODE
+        prompt "Wake detection mode"
+        default WAKE_MODE_CMD
+        help
+            How to trigger wake / start recording.
+
+        config WAKE_MODE_CMD
+            bool "CMD (RX 'START')"
+        config WAKE_MODE_BUTTON
+            bool "BUTTON (GPIO)"
+        config WAKE_MODE_RMS
+            bool "RMS (audio energy)"
+        config WAKE_MODE_WWE
+            bool "WWE (WakeNet wake word, esp-sr)"
+        config WAKE_MODE_MULTI
+            bool "MULTI (BUTTON + WWE)"
+    endchoice
+
+    config WAKE_BUTTON_GPIO
+        int "Wake button GPIO (for BUTTON mode)"
+        default 0
+        help
+            GPIO for wake button. ESP32-S3 BOOT button is typically GPIO 0.
+
+    config WAKE_BUTTON_ACTIVE_HIGH
+        bool "Button active high (pressed = GPIO high)"
+        default n
+        depends on WAKE_MODE_BUTTON
+        help
+            n = active-low: BOOT typical, press=0 release=1. y = press=1 release=0.
+
+    config RMS_THRESHOLD
+        int "RMS threshold for wake (for RMS mode)"
+        default 500
+        range 100 10000
+        help
+            Audio energy threshold. Exceed to trigger wake.
+
+    config DEVICE_NAME
+        string "BLE device name"
+        default "SONYA-WATCH"
+        help
+            BLE advertising name.
+
+    config STATUS_LED_GPIO
+        int "Status LED GPIO (-1 to disable)"
+        default -1
+        range -1 48
+        help
+            Optional GPIO for a simple status indicator (LED/backlight pin).
+            Patterns:
+              - advertising (not connected): slow blink
+              - connected: solid ON
+              - recording: fast blink
+              - error: triple blink burst
+
+    config STATUS_LED_ACTIVE_LEVEL
+        int "Status LED active level (0/1)"
+        default 1
+        range 0 1
+        help
+            Some boards wire LEDs as active-low. Set 0 for active-low, 1 for active-high.
+
+    config STATUS_SCREEN_ENABLE
+        bool "Enable simple status screen (AMOLED)"
+        default y
+        help
+            Initialize AMOLED via QSPI and render a simple status indicator:
+              - advertising (not connected): blue (slow blink)
+              - connected: green (solid)
+              - recording: red (fast blink)
+              - error: magenta (triple blink burst)
+
+    config I2S_BCK_GPIO
+        int "I2S BCK GPIO"
+        default 41
+        help
+            I2S bit clock. Waveshare: GPIO 41.
+
+    config I2S_WS_GPIO
+        int "I2S WS (LRCK) GPIO"
+        default 45
+        help
+            I2S word select. Waveshare: GPIO 45.
+
+    config I2S_DIN_GPIO
+        int "I2S DIN (data in) GPIO"
+        default 42
+        help
+            I2S data input from mic. Waveshare: GPIO 42.
+
+    config I2S_MCLK_GPIO
+        int "I2S MCLK GPIO"
+        default 16
+        help
+            I2S master clock. Waveshare: GPIO 16. Use -1 to disable.
+
+    config I2C_SDA_GPIO
+        int "I2C SDA GPIO"
+        default 15
+        help
+            I2C SDA for codec/touch. Waveshare ESP32-S3 Touch AMOLED 2.06: GPIO 15.
+
+    config I2C_SCL_GPIO
+        int "I2C SCL GPIO"
+        default 14
+        help
+            I2C SCL for codec/touch. Waveshare ESP32-S3 Touch AMOLED 2.06: GPIO 14.
+
+endmenu

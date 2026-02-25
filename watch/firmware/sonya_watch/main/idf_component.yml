@@ -1,0 +1,6 @@
+dependencies:
+  idf: '>=5.1'
+  espressif/esp_lcd_sh8601: ^1.0.0
+
+  espressif/es7210: ^1.0.1
+  espressif/esp-sr: ^2.3.1

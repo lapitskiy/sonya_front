@@ -1,0 +1,1 @@
+# Wake component - uses CONFIG_WAKE_MODE_* and CONFIG_WAKE_BUTTON_GPIO from main

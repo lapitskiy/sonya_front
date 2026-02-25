@@ -1,0 +1,1 @@
+# Audio capture uses CONFIG_AUDIO_SR, CONFIG_REC_SECONDS, CONFIG_I2S_* from main

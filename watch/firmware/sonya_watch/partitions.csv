@@ -1,0 +1,8 @@
+# Name,   Type, SubType, Offset,  Size,     Flags
+# Notes:
+# - `model` partition is required by esp-sr to flash/load selected speech models (WakeNet/VAD/NS/etc).
+# - Sizes assume >= 8MB flash.
+nvs,      data, nvs,     0x9000,  0x6000,
+phy_init, data, phy,     0xf000,  0x1000,
+factory,  app,  factory, 0x10000, 0x300000,
+model,    data, ,        ,        0x200000,
