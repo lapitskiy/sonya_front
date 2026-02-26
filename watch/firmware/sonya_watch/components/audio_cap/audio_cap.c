@@ -2,106 +2,104 @@
  * @file audio_cap.c
  * @brief I2S microphone capture
  *
- * TODO: Waveshare ESP32-S3 Touch AMOLED 2.06 uses ES7210 codec for dual mic.
- * ES7210 requires I2C init before I2S data is valid.
- * For minimal v0 we use raw I2S - if no sound, add ES7210 init via I2C.
+ * Waveshare ESP32-S3 Touch AMOLED 2.06 uses ES7210 codec (mic) and ES8311 (speaker).
+ * Use esp_codec_dev to configure codecs via shared I2C.
  */
 
 #include "audio_cap.h"
 #include "esp_log.h"
 #include "esp_check.h"
 #include "driver/i2s_std.h"
-#include "driver/i2c.h"
-#include "es7210.h"
+#include "esp_codec_dev_defaults.h"
+#include "esp_codec_dev.h"
+#include "audio_codec_ctrl_if.h"
+#include "audio_codec_data_if.h"
+#include "audio_codec_gpio_if.h"
+#include "es7210_adc.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/ringbuf.h"
+#include "sonya_board.h"
 #include <string.h>
 #include <inttypes.h>
 
 static const char *TAG = "audio_cap";
 
-#define I2C_MASTER_NUM I2C_NUM_0
-#define ES7210_ADDR_DEFAULT 0x40
-#define ES7210_ADDR_ALT 0x41
-
-#ifndef CONFIG_I2C_SDA_GPIO
-#define CONFIG_I2C_SDA_GPIO 15
-#endif
-#ifndef CONFIG_I2C_SCL_GPIO
-#define CONFIG_I2C_SCL_GPIO 14
-#endif
-
 static i2s_chan_handle_t rx_handle = NULL;
 static RingbufHandle_t ringbuf = NULL;
 static bool capturing = false;
 static TaskHandle_t capture_task = NULL;
-static uint8_t s_es7210_addr = ES7210_ADDR_DEFAULT;
-static es7210_dev_handle_t s_es7210 = NULL;
-
-static esp_err_t i2c_probe_addr(uint8_t addr)
-{
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true);
-    i2c_master_stop(cmd);
-    esp_err_t err = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, pdMS_TO_TICKS(100));
-    i2c_cmd_link_delete(cmd);
-    return err;
-}
-
-static void i2c_scan_bus(void)
-{
-    ESP_LOGI(TAG, "I2C scan on SDA=%d SCL=%d ...", CONFIG_I2C_SDA_GPIO, CONFIG_I2C_SCL_GPIO);
-    int found = 0;
-    for (int addr = 0x03; addr <= 0x77; addr++) {
-        if (i2c_probe_addr((uint8_t)addr) == ESP_OK) {
-            ESP_LOGI(TAG, "I2C device found at 0x%02X", addr);
-            found++;
-        }
-    }
-    if (found == 0) {
-        ESP_LOGW(TAG, "I2C scan: no devices found");
-    }
-}
-
-static esp_err_t es7210_init_and_config(int sample_rate_hz)
-{
-    ESP_LOGI(TAG, "Init ES7210 using espressif/es7210 (addr=0x%02X)...", s_es7210_addr);
-
-    if (s_es7210) {
-        es7210_del_codec(s_es7210);
-        s_es7210 = NULL;
-    }
-
-    es7210_i2c_config_t i2c_conf = {
-        .i2c_port = I2C_MASTER_NUM,
-        .i2c_addr = s_es7210_addr,
-    };
-    ESP_RETURN_ON_ERROR(es7210_new_codec(&i2c_conf, &s_es7210), TAG, "es7210_new_codec");
-
-    es7210_codec_config_t cfg = {
-        .sample_rate_hz = (uint32_t)sample_rate_hz,
-        .mclk_ratio = 256,
-        .i2s_format = ES7210_I2S_FMT_I2S,
-        .bit_width = ES7210_I2S_BITS_16B,
-        .mic_bias = ES7210_MIC_BIAS_2V78,
-        .mic_gain = ES7210_MIC_GAIN_33DB,
-        .flags = {
-            .tdm_enable = 0,
-        },
-    };
-    ESP_RETURN_ON_ERROR(es7210_config_codec(s_es7210, &cfg), TAG, "es7210_config_codec");
-    ESP_LOGI(TAG, "ES7210 configured: sr=%d mclk_ratio=%u fmt=%u bits=%u tdm=%u",
-             sample_rate_hz, (unsigned)cfg.mclk_ratio, (unsigned)cfg.i2s_format, (unsigned)cfg.bit_width,
-             (unsigned)cfg.flags.tdm_enable);
-    return ESP_OK;
-}
+static const audio_codec_data_if_t *s_i2s_data_if = NULL;
+static esp_codec_dev_handle_t s_mic = NULL;
+static i2s_chan_handle_t s_tx_handle = NULL; // unused, but kept for esp_codec_dev compatibility
 
 #define RINGBUF_SIZE (16000 * 2 * 2)  /* ~2 sec at 16kHz 16bit mono */
 #define DMA_BUF_COUNT 4
 #define DMA_BUF_LEN 512
+
+static int init_mic_codec(int sr)
+{
+    i2c_master_bus_handle_t bus = sonya_board_i2c_bus();
+    if (!bus) return -1;
+
+    /* Bind esp_codec_dev to I2S handles (it uses these for clocking & data path) */
+    audio_codec_i2s_cfg_t i2s_cfg = {
+        .port = I2S_NUM_0,
+        .rx_handle = rx_handle,
+        .tx_handle = s_tx_handle,
+    };
+    s_i2s_data_if = audio_codec_new_i2s_data(&i2s_cfg);
+    if (!s_i2s_data_if) {
+        ESP_LOGE(TAG, "audio_codec_new_i2s_data failed");
+        return -1;
+    }
+
+    audio_codec_i2c_cfg_t i2c_cfg = {
+        .port = I2C_NUM_0,
+        .addr = ES7210_CODEC_DEFAULT_ADDR,
+        .bus_handle = bus,
+    };
+    const audio_codec_ctrl_if_t *i2c_ctrl_if = audio_codec_new_i2c_ctrl(&i2c_cfg);
+    if (!i2c_ctrl_if) {
+        ESP_LOGE(TAG, "audio_codec_new_i2c_ctrl failed");
+        return -1;
+    }
+
+    es7210_codec_cfg_t es7210_cfg = {
+        .ctrl_if = i2c_ctrl_if,
+    };
+    const audio_codec_if_t *es7210_dev = es7210_codec_new(&es7210_cfg);
+    if (!es7210_dev) {
+        ESP_LOGE(TAG, "es7210_codec_new failed");
+        return -1;
+    }
+
+    esp_codec_dev_cfg_t dev_cfg = {
+        .dev_type = ESP_CODEC_DEV_TYPE_IN,
+        .codec_if = es7210_dev,
+        .data_if = s_i2s_data_if,
+    };
+    s_mic = esp_codec_dev_new(&dev_cfg);
+    if (!s_mic) {
+        ESP_LOGE(TAG, "esp_codec_dev_new(mic) failed");
+        return -1;
+    }
+
+    esp_codec_dev_sample_info_t fs = {
+        .sample_rate = (uint32_t)sr,
+        .channel = I2S_SLOT_MODE_STEREO,
+        .bits_per_sample = I2S_DATA_BIT_WIDTH_16BIT,
+    };
+    esp_err_t err = esp_codec_dev_open(s_mic, &fs);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_codec_dev_open(mic) failed: %d", err);
+        return -1;
+    }
+    // Default mic gain in dB. Keep conservative to avoid clipping.
+    (void)esp_codec_dev_set_in_gain(s_mic, 0.0f);
+    return 0;
+}
 
 static void capture_task_fn(void *arg)
 {
@@ -118,7 +116,8 @@ static void capture_task_fn(void *arg)
             frames_acc += (uint32_t)(r / 4);
             uint64_t now_us = esp_timer_get_time();
             uint64_t dt_us = now_us - t0_us;
-            if (dt_us >= 1000000) {
+            // Reduce log spam: effective SR is useful, but not every second.
+            if (dt_us >= 10ULL * 1000000ULL) {
                 // Effective sample rate based on received frames (stereo frame == 1 sample per channel per LRCK)
                 uint32_t eff = (uint32_t)((uint64_t)frames_acc * 1000000ULL / dt_us);
                 ESP_LOGI("audio_cap_diag", "eff_sr ~= %" PRIu32 " Hz (frames=%" PRIu32 " dt=%" PRIu64 "us)", eff, frames_acc, dt_us);
@@ -126,7 +125,8 @@ static void capture_task_fn(void *arg)
                 frames_acc = 0;
             }
 
-            if (log_cnt++ % 20 == 0) { // Log every ~20 chunks
+            // Reduce log spam: log mic stats rarely (still useful to see "there is audio").
+            if (log_cnt++ % 200 == 0) { // ~1 line per few seconds
                 int frames = (int)(r / 4);
                 const int16_t *lr = (const int16_t *)tmp;
                 int32_t maxL = 0, maxR = 0;
@@ -187,42 +187,13 @@ int audio_cap_init(void)
     int ws = CONFIG_I2S_WS_GPIO;
     int din = CONFIG_I2S_DIN_GPIO;
     int mclk = CONFIG_I2S_MCLK_GPIO;
-    int sda = CONFIG_I2C_SDA_GPIO;
-    int scl = CONFIG_I2C_SCL_GPIO;
 
-    // Initialize I2C
-    i2c_config_t i2c_cfg = {
-        .mode = I2C_MODE_MASTER,
-        .sda_io_num = sda,
-        .scl_io_num = scl,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = 100000,
-    };
-    esp_err_t err = i2c_param_config(I2C_MASTER_NUM, &i2c_cfg);
-    if (err != ESP_OK) return -1;
-    err = i2c_driver_install(I2C_MASTER_NUM, i2c_cfg.mode, 0, 0, 0);
-    if (err != ESP_OK) return -1;
-
-    i2c_scan_bus();
-
-    // Pick ES7210 address (some boards use 0x41)
-    if (i2c_probe_addr(ES7210_ADDR_DEFAULT) == ESP_OK) {
-        s_es7210_addr = ES7210_ADDR_DEFAULT;
-    } else if (i2c_probe_addr(ES7210_ADDR_ALT) == ESP_OK) {
-        s_es7210_addr = ES7210_ADDR_ALT;
-    } else {
-        ESP_LOGE(TAG, "ES7210 not found at 0x%02X/0x%02X (check I2C pins/address)", ES7210_ADDR_DEFAULT, ES7210_ADDR_ALT);
-    }
-
-    // Initialize ES7210
-    if (es7210_init_and_config(sr) != ESP_OK) {
-        ESP_LOGE(TAG, "ES7210 init/config failed");
-    }
+    // Shared I2C bus (touch + codecs)
+    if (sonya_board_i2c_init() != ESP_OK) return -1;
 
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     chan_cfg.auto_clear = true;
-    err = i2s_new_channel(&chan_cfg, NULL, &rx_handle);
+    esp_err_t err = i2s_new_channel(&chan_cfg, &s_tx_handle, &rx_handle);
     if (err) {
         ESP_LOGE(TAG, "i2s_new_channel %d", err);
         return -1;
@@ -257,6 +228,22 @@ int audio_cap_init(void)
     err = i2s_channel_init_std_mode(rx_handle, &std_cfg);
     if (err) {
         ESP_LOGE(TAG, "i2s_channel_init %d", err);
+        i2s_del_channel(s_tx_handle);
+        i2s_del_channel(rx_handle);
+        return -1;
+    }
+
+    err = i2s_channel_init_std_mode(s_tx_handle, &std_cfg);
+    if (err) {
+        ESP_LOGE(TAG, "i2s_channel_init (tx) %d", err);
+        i2s_del_channel(s_tx_handle);
+        i2s_del_channel(rx_handle);
+        return -1;
+    }
+
+    if (init_mic_codec(sr) != 0) {
+        ESP_LOGE(TAG, "init_mic_codec failed");
+        i2s_del_channel(s_tx_handle);
         i2s_del_channel(rx_handle);
         return -1;
     }
@@ -264,19 +251,26 @@ int audio_cap_init(void)
     ringbuf = xRingbufferCreate(RINGBUF_SIZE, RINGBUF_TYPE_BYTEBUF);
     if (!ringbuf) {
         ESP_LOGE(TAG, "ringbuf create fail");
+        (void)esp_codec_dev_close(s_mic);
         i2s_del_channel(rx_handle);
+        i2s_del_channel(s_tx_handle);
         return -1;
     }
 
-    ESP_LOGI(TAG, "audio_cap init: %d Hz, bck=%d ws=%d din=%d mclk=%d i2c_sda=%d i2c_scl=%d es7210=0x%02X",
-             sr, bck, ws, din, mclk, sda, scl, s_es7210_addr);
+    ESP_LOGI(TAG, "audio_cap init: %d Hz, bck=%d ws=%d din=%d mclk=%d (codec via esp_codec_dev)",
+             sr, bck, ws, din, mclk);
     return 0;
 }
 
 int audio_cap_start(void)
 {
     if (!rx_handle) return -1;
-    esp_err_t err = i2s_channel_enable(rx_handle);
+    esp_err_t err = ESP_OK;
+    if (s_tx_handle) {
+        err = i2s_channel_enable(s_tx_handle);
+        if (err) return -1;
+    }
+    err = i2s_channel_enable(rx_handle);
     if (err) return -1;
     capturing = true;
     xTaskCreate(capture_task_fn, "audio_cap", 6144, NULL, 5, &capture_task);
@@ -292,6 +286,9 @@ void audio_cap_stop(void)
     }
     if (rx_handle) {
         i2s_channel_disable(rx_handle);
+    }
+    if (s_tx_handle) {
+        i2s_channel_disable(s_tx_handle);
     }
     ESP_LOGI(TAG, "audio capture stopped");
 }

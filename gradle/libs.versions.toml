@@ -2,7 +2,7 @@
 # AGP 9 enforces unique namespaces across all AARs; TensorFlow Lite publishes
 # tensorflow-lite + tensorflow-lite-api sharing the same namespace, which breaks manifest merge.
 # Using AGP 8.x avoids this hard failure.
-agp = "9.0.0"
+agp = "9.0.1"
 coreKtx = "1.10.1"
 junit = "4.13.2"
 junitVersion = "1.1.5"

@@ -345,6 +345,17 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        // App-level BLE auto-connect: runs regardless of current tab while app is visible.
+        watchViewModel.setAppVisible(true)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        watchViewModel.setAppVisible(false)
+    }
+
     private fun checkAndRequestPermission() {
         Log.d("MainActivity", "Checking permissions.")
         val audioGranted =

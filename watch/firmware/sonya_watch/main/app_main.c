@@ -21,6 +21,7 @@
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "status_ui.h"
+#include "sdkconfig.h"
 
 static const char *TAG = "main";
 
@@ -291,8 +292,6 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "boot");
 
-    status_ui_init();
-
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -309,6 +308,9 @@ void app_main(void)
     ESP_LOGI(TAG, "BLE up");
     esp_log_level_set("NimBLE", ESP_LOG_WARN);
 
+    // Init UI after BLE: BT/NimBLE needs internal RAM for HCI buffers.
+    status_ui_init();
+
     err = audio_cap_init();
     if (err) {
         ESP_LOGE(TAG, "audio_cap_init fail %d", err);
@@ -322,7 +324,7 @@ void app_main(void)
     }
     ESP_LOGI(TAG, "audio capture running");
 
-    err = wake_init(WAKE_MODE_CMD);
+    err = wake_init(WAKE_MODE_MULTI);
     if (err) {
         ESP_LOGE(TAG, "wake_init fail %d", err);
         return;
@@ -361,6 +363,13 @@ void app_main(void)
         s_is_recording = true;
 
         ESP_LOGI(TAG, "wake detected, confidence=%u", wake_get_confidence());
+#if defined(CONFIG_SR_WN_WN9_HEYIVY_TTS2)
+        ESP_LOGI(TAG, "ui: show 'HEY IVY' 10s");
+        status_ui_show_message("HEY IVY", 10 * 1000);
+#else
+        ESP_LOGI(TAG, "ui: show 'WAKE' 10s");
+        status_ui_show_message("WAKE", 10 * 1000);
+#endif
 #if defined(CONFIG_WAKE_MODE_BUTTON)
         if (!sonya_ble_is_connected()) {
             ESP_LOGW(TAG, "button trigger but BLE not connected -> ignore");

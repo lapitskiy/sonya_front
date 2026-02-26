@@ -2,6 +2,7 @@
 
 #include "sonya_ble.h"
 #include "status_screen.h"
+#include "ui_lvgl.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
@@ -15,6 +16,20 @@ static int s_active = 1;
 static volatile bool s_recording = false;
 static volatile bool s_error = false;
 
+static void task_ui_conn(void *arg)
+{
+    (void)arg;
+    bool last = false;
+    for (;;) {
+        bool conn = sonya_ble_is_connected();
+        if (conn != last) {
+            ui_lvgl_set_connected(conn);
+            last = conn;
+        }
+        vTaskDelay(pdMS_TO_TICKS(250));
+    }
+}
+
 static inline void led_write(bool on)
 {
     if (s_gpio < 0) return;
@@ -26,7 +41,8 @@ void status_ui_set_recording(bool recording)
 {
     static bool last = false;
     s_recording = recording;
-    status_screen_set_recording(recording);
+    if (CONFIG_UI_LVGL_ENABLE) ui_lvgl_set_recording(recording);
+    else status_screen_set_recording(recording);
     if (recording != last) {
         ESP_LOGI(TAG, "recording=%d", recording ? 1 : 0);
         last = recording;
@@ -37,11 +53,18 @@ void status_ui_set_error(bool error)
 {
     static bool last = false;
     s_error = error;
-    status_screen_set_error(error);
+    if (CONFIG_UI_LVGL_ENABLE) ui_lvgl_set_error(error);
+    else status_screen_set_error(error);
     if (error != last) {
         ESP_LOGI(TAG, "error=%d", error ? 1 : 0);
         last = error;
     }
+}
+
+void status_ui_show_message(const char *msg, uint32_t ms)
+{
+    if (CONFIG_UI_LVGL_ENABLE) ui_lvgl_show_message(msg, ms);
+    else status_screen_show_message(msg, ms);
 }
 
 static void task_led(void *arg)
@@ -115,6 +138,19 @@ void status_ui_init(void)
         xTaskCreate(task_led, "status_led", 2048, NULL, 5, NULL);
     }
 
-    status_screen_init();
+    if (CONFIG_UI_LVGL_ENABLE) {
+        int rc = ui_lvgl_init();
+        if (rc != 0) {
+            ESP_LOGE(TAG, "ui_lvgl_init failed (%d)", rc);
+            // No fallback: keep running headless, signal error via LED task (if configured).
+            s_error = true;
+            led_write(false);
+            return;
+        } else {
+            xTaskCreate(task_ui_conn, "ui_conn", 2048, NULL, 5, NULL);
+        }
+    } else {
+        status_screen_init();
+    }
 }
 

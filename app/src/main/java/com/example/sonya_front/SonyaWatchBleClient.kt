@@ -1,5 +1,6 @@
 package com.example.sonya_front
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
@@ -15,6 +16,7 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -28,9 +30,13 @@ class SonyaWatchBleClient(
     private val appCtx: Context,
     private val onLog: (String) -> Unit,
     private val onConnectedChanged: (Boolean) -> Unit,
+    private val onScanningChanged: (Boolean) -> Unit,
     private val onNotifyBytes: (ByteArray) -> Unit,
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    private val prefs = appCtx.getSharedPreferences("sonya_watch_ble", Context.MODE_PRIVATE)
+    private val prefKeyLastAddr = "last_addr"
 
     private var scannerCallback: ScanCallback? = null
     private var gatt: BluetoothGatt? = null
@@ -39,10 +45,17 @@ class SonyaWatchBleClient(
     private var txChar: BluetoothGattCharacteristic? = null
 
     @Volatile private var connected = false
+    @Volatile private var scanning = false
     private val connecting = AtomicBoolean(false)
     private val scanSessionId = AtomicInteger(0)
     private val scanLoggedAddrs = HashSet<String>()
     private var scanOtherLogBudget = 20
+    @Volatile private var autoEnabled = false
+    private var autoIntervalMs: Long = 15_000L
+    private var autoScanWindowMs: Long = 6_000L
+    private var autoTickRunnable: Runnable? = null
+    private var scanStopRunnable: Runnable? = null
+    private var connectTimeoutRunnable: Runnable? = null
 
     private val writeQueue = ArrayDeque<ByteArray>(64)
     private var writeInFlight = false
@@ -51,9 +64,43 @@ class SonyaWatchBleClient(
     private var writeLastLogAtMs: Long = 0L
 
     fun isConnected(): Boolean = connected
+    fun isScanning(): Boolean = scanning
+
+    fun isAutoEnabled(): Boolean = autoEnabled
+
+    fun setAutoConnectEnabled(
+        enabled: Boolean,
+        intervalMs: Long = 15_000L,
+        scanWindowMs: Long = 6_000L,
+    ) {
+        autoIntervalMs = intervalMs
+        autoScanWindowMs = scanWindowMs
+        if (autoEnabled == enabled) return
+        autoEnabled = enabled
+        if (!enabled) {
+            cancelAutoRunnables()
+            stopScanIfRunning(reason = "auto_disabled")
+            // Do NOT disconnect an active connection here; user may want to keep it.
+            log("auto: disabled")
+            return
+        }
+        log("auto: enabled (interval=${autoIntervalMs}ms window=${autoScanWindowMs}ms)")
+        kickAutoConnectNow()
+    }
+
+    fun kickAutoConnectNow() {
+        if (!autoEnabled) return
+        mainHandler.post { autoTick() }
+    }
 
     @SuppressLint("MissingPermission")
-    fun disconnect() {
+    fun disconnect(stopAuto: Boolean = true) {
+        // User explicit disconnect should stop auto-reconnect to avoid "fighting" the UI.
+        if (stopAuto) {
+            autoEnabled = false
+            cancelAutoRunnables()
+        }
+
         // Invalidate any in-flight scan callbacks and pending "connect once" gate.
         scanSessionId.incrementAndGet()
         connecting.set(false)
@@ -64,6 +111,7 @@ class SonyaWatchBleClient(
         } catch (_: Throwable) {
         } finally {
             scannerCallback = null
+            setScanning(false)
         }
 
         try {
@@ -85,7 +133,7 @@ class SonyaWatchBleClient(
     }
 
     @SuppressLint("MissingPermission")
-    fun scanAndConnect() {
+    fun scanAndConnect(force: Boolean = true) {
         val adapter = getAdapter()
         if (adapter == null) {
             log("Bluetooth adapter is null")
@@ -96,7 +144,22 @@ class SonyaWatchBleClient(
             return
         }
 
-        disconnect()
+        if (!force && (connected || connecting.get())) {
+            log("scanAndConnect(force=false): already connected/connecting")
+            return
+        }
+
+        if (!hasBlePermissionsForScanAndConnect()) {
+            log("scan: missing Bluetooth permissions (SCAN/CONNECT)")
+            return
+        }
+
+        // Manual button should be a "force reconnect": reset state.
+        if (force) {
+            disconnect(stopAuto = false)
+        } else {
+            closeGattState(reason = "scan_restart")
+        }
 
         val scanner = adapter.bluetoothLeScanner
         if (scanner == null) {
@@ -138,17 +201,23 @@ class SonyaWatchBleClient(
                 if (!connecting.compareAndSet(false, true)) return
 
                 log("scan: found $name addr=${dev.address}, connecting...")
+                saveLastAddr(dev.address)
                 try {
                     scanner.stopScan(this)
                 } catch (_: Throwable) {
                 }
                 scannerCallback = null
+                setScanning(false)
+                scanStopRunnable?.let { mainHandler.removeCallbacks(it) }
+                scanStopRunnable = null
                 connectGatt(dev)
             }
 
             override fun onScanFailed(errorCode: Int) {
                 if (session != scanSessionId.get()) return
                 log("scan failed: errorCode=$errorCode")
+                scannerCallback = null
+                setScanning(false)
             }
         }
 
@@ -158,10 +227,22 @@ class SonyaWatchBleClient(
             // No ScanFilter: in practice some firmwares don't advertise service UUIDs reliably,
             // and name can be in scan record (not always matched by ScanFilter as expected).
             scanner.startScan(null, settings, cb)
+            setScanning(true)
+            scanStopRunnable?.let { mainHandler.removeCallbacks(it) }
+            scanStopRunnable = Runnable {
+                if (session != scanSessionId.get()) return@Runnable
+                // Stop scan window if we didn't connect.
+                stopScanIfRunning(reason = "scan_window_timeout")
+            }
+            mainHandler.postDelayed(scanStopRunnable!!, autoScanWindowMs.coerceAtLeast(1500L))
         } catch (se: SecurityException) {
             log("scan: SecurityException (missing BLUETOOTH_SCAN?): ${se.message}")
+            scannerCallback = null
+            setScanning(false)
         } catch (t: Throwable) {
             log("scan: failed: ${t.javaClass.simpleName}: ${t.message}")
+            scannerCallback = null
+            setScanning(false)
         }
     }
 
@@ -247,6 +328,13 @@ class SonyaWatchBleClient(
     @SuppressLint("MissingPermission")
     private fun connectGatt(dev: BluetoothDevice) {
         try {
+            if (!hasBlePermissionsForScanAndConnect()) {
+                connecting.set(false)
+                log("connectGatt: missing Bluetooth permissions (CONNECT)")
+                return
+            }
+            tryEnsureBond(dev)
+            scheduleConnectTimeout()
             val g = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 dev.connectGatt(appCtx, false, gattCb, BluetoothDevice.TRANSPORT_LE)
             } else {
@@ -254,8 +342,10 @@ class SonyaWatchBleClient(
             }
             gatt = g
         } catch (se: SecurityException) {
+            connecting.set(false)
             log("connectGatt: SecurityException (missing BLUETOOTH_CONNECT?): ${se.message}")
         } catch (t: Throwable) {
+            connecting.set(false)
             log("connectGatt: failed: ${t.javaClass.simpleName}: ${t.message}")
         }
     }
@@ -267,6 +357,8 @@ class SonyaWatchBleClient(
                 BluetoothProfile.STATE_CONNECTED -> {
                     setConnected(true)
                     connecting.set(false)
+                    cancelConnectTimeout()
+                    saveLastAddr(gatt.device?.address)
                     try {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                             gatt.requestMtu(247)
@@ -282,6 +374,7 @@ class SonyaWatchBleClient(
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     setConnected(false)
                     connecting.set(false)
+                    cancelConnectTimeout()
                     try {
                         gatt.close()
                     } catch (_: Throwable) {
@@ -291,6 +384,9 @@ class SonyaWatchBleClient(
                         service = null
                         rxChar = null
                         txChar = null
+                    }
+                    if (autoEnabled) {
+                        scheduleNextAutoTick(1200L)
                     }
                 }
             }
@@ -434,8 +530,180 @@ class SonyaWatchBleClient(
         }
     }
 
+    private fun setScanning(v: Boolean) {
+        if (scanning == v) return
+        scanning = v
+        mainHandler.post {
+            onScanningChanged(v)
+        }
+    }
+
     private fun log(msg: String) {
         mainHandler.post { onLog(msg) }
+    }
+
+    private fun hasBlePermissionsForScanAndConnect(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
+        val scanOk = appCtx.checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+        val connOk = appCtx.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+        return scanOk && connOk
+    }
+
+    private fun saveLastAddr(addr: String?) {
+        val a = addr?.trim().orEmpty()
+        if (a.isBlank() || a == "00:00:00:00:00:00") return
+        try {
+            prefs.edit().putString(prefKeyLastAddr, a).apply()
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun loadLastAddr(): String {
+        return try { prefs.getString(prefKeyLastAddr, "")?.trim().orEmpty() } catch (_: Throwable) { "" }
+    }
+
+    private fun autoTick() {
+        if (!autoEnabled) return
+        if (connected) {
+            scheduleNextAutoTick(autoIntervalMs)
+            return
+        }
+        if (connecting.get()) {
+            scheduleNextAutoTick(autoIntervalMs)
+            return
+        }
+
+        val adapter = getAdapter()
+        if (adapter == null) {
+            log("auto: Bluetooth adapter is null")
+            scheduleNextAutoTick(autoIntervalMs)
+            return
+        }
+        if (!adapter.isEnabled) {
+            log("auto: Bluetooth is disabled")
+            scheduleNextAutoTick(autoIntervalMs)
+            return
+        }
+        if (!hasBlePermissionsForScanAndConnect()) {
+            log("auto: missing Bluetooth permissions (SCAN/CONNECT)")
+            scheduleNextAutoTick(autoIntervalMs)
+            return
+        }
+
+        // 1) Try direct connect to last known address.
+        val addr = loadLastAddr()
+        if (addr.isNotBlank()) {
+            try {
+                val dev = adapter.getRemoteDevice(addr)
+                if (connecting.compareAndSet(false, true)) {
+                    closeGattState(reason = "auto_direct_connect")
+                    log("auto: direct connect addr=$addr")
+                    connectGatt(dev)
+                    scheduleNextAutoTick(autoIntervalMs)
+                    return
+                }
+            } catch (se: SecurityException) {
+                log("auto: direct connect SecurityException: ${se.message}")
+            } catch (t: Throwable) {
+                log("auto: direct connect failed: ${t.javaClass.simpleName}: ${t.message}")
+            }
+        }
+
+        // 2) Otherwise scan in a short window.
+        if (scannerCallback != null) {
+            scheduleNextAutoTick(autoIntervalMs)
+            return
+        }
+        log("auto: scan+connect")
+        scanAndConnect(force = false)
+        scheduleNextAutoTick(autoIntervalMs)
+    }
+
+    private fun scheduleNextAutoTick(delayMs: Long) {
+        if (!autoEnabled) return
+        autoTickRunnable?.let { mainHandler.removeCallbacks(it) }
+        autoTickRunnable = Runnable { autoTick() }
+        mainHandler.postDelayed(autoTickRunnable!!, delayMs.coerceAtLeast(800L))
+    }
+
+    private fun cancelAutoRunnables() {
+        autoTickRunnable?.let { mainHandler.removeCallbacks(it) }
+        autoTickRunnable = null
+        scanStopRunnable?.let { mainHandler.removeCallbacks(it) }
+        scanStopRunnable = null
+        connectTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        connectTimeoutRunnable = null
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun stopScanIfRunning(reason: String) {
+        val cb = scannerCallback ?: return
+        try {
+            getAdapter()?.bluetoothLeScanner?.stopScan(cb)
+        } catch (_: Throwable) {
+        } finally {
+            scannerCallback = null
+            scanStopRunnable?.let { mainHandler.removeCallbacks(it) }
+            scanStopRunnable = null
+        }
+        setScanning(false)
+        log("scan: stopped ($reason)")
+    }
+
+    private fun scheduleConnectTimeout() {
+        connectTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        connectTimeoutRunnable = Runnable {
+            if (!connecting.get() || connected) return@Runnable
+            log("connect: timeout -> disconnect")
+            closeGattState(reason = "connect_timeout")
+            connecting.set(false)
+            setConnected(false)
+        }
+        mainHandler.postDelayed(connectTimeoutRunnable!!, 12_000L)
+    }
+
+    private fun cancelConnectTimeout() {
+        connectTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        connectTimeoutRunnable = null
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun closeGattState(reason: String) {
+        try {
+            gatt?.disconnect()
+        } catch (_: Throwable) {
+        }
+        try {
+            gatt?.close()
+        } catch (_: Throwable) {
+        }
+        gatt = null
+        service = null
+        rxChar = null
+        txChar = null
+        writeQueue.clear()
+        writeInFlight = false
+        cancelConnectTimeout()
+        log("gatt: cleared ($reason)")
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun tryEnsureBond(dev: BluetoothDevice) {
+        try {
+            // Bonding is optional for BLE; for some devices it improves reconnect stability.
+            if (dev.bondState == BluetoothDevice.BOND_BONDED) return
+            if (dev.bondState == BluetoothDevice.BOND_BONDING) return
+            val ok = dev.createBond()
+            if (!ok) {
+                log("bond: createBond returned false (may require user confirmation)")
+            } else {
+                log("bond: createBond requested (system may ask confirmation)")
+            }
+        } catch (se: SecurityException) {
+            log("bond: SecurityException (missing BLUETOOTH_CONNECT?): ${se.message}")
+        } catch (t: Throwable) {
+            log("bond: failed: ${t.javaClass.simpleName}: ${t.message}")
+        }
     }
 }
 

@@ -1,0 +1,23 @@
+idf_component_register(
+    SRCS
+        "ui_lvgl.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        driver
+        esp_driver_i2c
+        esp_lcd
+        esp_lcd_sh8601
+        esp_lcd_touch_ft5x06
+        esp_timer
+        freertos
+        heap
+        esp_lvgl_port
+        lvgl
+        sonya_board
+    EMBED_FILES
+        "images/bluetooh_off_24.png"
+        "images/bluetooh_on_24.png"
+        "gif/voice_recording.gif"
+)
+

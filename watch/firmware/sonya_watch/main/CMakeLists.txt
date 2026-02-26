@@ -16,4 +16,5 @@ idf_component_register(
         protocol
         rec_store
         pull_stream
+        ui_lvgl
 )

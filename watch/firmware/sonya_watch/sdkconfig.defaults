@@ -30,4 +30,12 @@ CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=48
 CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT=48
 
 # WakeNet (esp-sr): pick at least one wake phrase, otherwise wakenet_model_name is NULL and wake_init fails.
-CONFIG_SR_WN_WN9_HIESP=y
+# Wake phrase: "Hey,Ivy"
+CONFIG_SR_WN_WN9_HEYIVY_TTS2=y
+
+# UI: LVGL (kept isolated, status_ui routes to it)
+CONFIG_UI_LVGL_ENABLE=y
+
+# LVGL fonts: make UI readable + allow symbol icons to be visible
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_28=y

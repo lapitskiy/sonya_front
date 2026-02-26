@@ -24,6 +24,7 @@ import kotlin.math.sqrt
 data class SonyaWatchUiState(
     val scanning: Boolean = false,
     val connected: Boolean = false,
+    val autoConnect: Boolean = true,
     val backendUrl: String = "",
     val lastEvent: String = "",
     val bytesTotal: Long = 0,
@@ -70,31 +71,59 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     private var pullBytesAtLastReport: Int = 0
     private var liveRecId: Int = -1
 
+    @Volatile private var appVisible: Boolean = false
+
     private val ble = SonyaWatchBleClient(
         appCtx = app.applicationContext,
         onLog = { appendLog(it) },
         onConnectedChanged = { isConn ->
             val cur = _ui.value
-            _ui.value = cur.copy(connected = isConn, scanning = if (isConn) false else cur.scanning)
+            _ui.value = cur.copy(connected = isConn)
             appendLog(if (isConn) "BLE connected" else "BLE disconnected")
+        },
+        onScanningChanged = { isScan ->
+            val cur = _ui.value
+            _ui.value = cur.copy(scanning = isScan)
         },
         onNotifyBytes = { bytes -> onNotify(bytes) }
     )
+
+    fun setAppVisible(visible: Boolean) {
+        appVisible = visible
+        applyAutoConnect()
+    }
+
+    fun setAutoConnectEnabled(enabled: Boolean) {
+        _ui.value = _ui.value.copy(autoConnect = enabled)
+        applyAutoConnect()
+        if (enabled && appVisible) {
+            ble.kickAutoConnectNow()
+        }
+    }
+
+    private fun applyAutoConnect() {
+        val enabled = appVisible && _ui.value.autoConnect
+        ble.setAutoConnectEnabled(enabled)
+    }
 
     fun setBackendUrl(url: String) {
         _ui.value = _ui.value.copy(backendUrl = url)
     }
 
     fun scanAndConnect() {
-        _ui.value = _ui.value.copy(scanning = true)
         appendLog("scanAndConnect()")
-        ble.scanAndConnect()
+        // Manual scan should also enable auto-reconnect while app is visible.
+        if (!_ui.value.autoConnect) {
+            _ui.value = _ui.value.copy(autoConnect = true)
+            applyAutoConnect()
+        }
+        ble.scanAndConnect(force = true)
     }
 
     fun disconnect() {
         appendLog("disconnect()")
         ble.disconnect()
-        _ui.value = _ui.value.copy(scanning = false, connected = false)
+        _ui.value = _ui.value.copy(scanning = false, connected = false, autoConnect = false)
         recording = false
         downloading = false
         expectedSeq = null

@@ -1,0 +1,385 @@
+/**
+ * @file ui_lvgl.c
+ * @brief LVGL UI wrapper (isolated module)
+ *
+ * Goal: keep UI separate from wake/rec/ble logic.
+ * The rest of firmware can keep calling status_ui_*; status_ui will route to this module.
+ */
+
+#include "ui_lvgl.h"
+
+#include <string.h>
+
+#include "esp_log.h"
+#include "esp_check.h"
+#include "driver/spi_master.h"
+#include "driver/gpio.h"
+#include "esp_lcd_panel_ops.h"
+#include "esp_lcd_panel_io.h"
+#include "esp_lcd_sh8601.h"
+#include "esp_lcd_touch_ft5x06.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+// LVGL port
+#include "esp_lvgl_port.h"
+#include "lvgl.h"
+#include "sonya_board.h"
+
+static const char *TAG = "ui_lvgl";
+
+// Waveshare ESP32-S3 Touch AMOLED 2.06 (QSPI) pinout (same as status_screen.c)
+#define LCD_SPI_HOST      SPI2_HOST
+#define LCD_PIN_CS        12
+#define LCD_PIN_PCLK      11
+#define LCD_PIN_DATA0     4
+#define LCD_PIN_DATA1     5
+#define LCD_PIN_DATA2     6
+#define LCD_PIN_DATA3     7
+#define LCD_PIN_RST       8
+
+#define LCD_H_RES         410
+#define LCD_V_RES         502
+#define LCD_X_GAP         0x16
+#define LCD_Y_GAP         0
+
+// Touch (FT3168 via ft5x06 driver family)
+#define TOUCH_PIN_RST     9
+#define TOUCH_PIN_INT     38
+
+// UI margins (percent-based, integer math)
+#define UI_X_PAD          8
+#define UI_X_SHIFT_10P    ((LCD_H_RES * 10) / 100)  // ~10% of width
+#define UI_TOP_Y_3P       ((LCD_V_RES * 3) / 100)   // ~3% of height
+
+static esp_lcd_panel_handle_t s_panel = NULL;
+static esp_lcd_panel_io_handle_t s_io = NULL;
+static lv_display_t *s_disp = NULL;
+static esp_lcd_touch_handle_t s_touch = NULL;
+static lv_indev_t *s_indev = NULL;
+
+// Init commands known to work on Waveshare AMOLED SH8601 (copied from status_screen.c)
+static const sh8601_lcd_init_cmd_t lcd_init_cmds[] = {
+    {0x11, (uint8_t[]){0x00}, 0, 120},                 // Sleep out
+    {0xC4, (uint8_t[]){0x80}, 1, 0},
+    {0x44, (uint8_t[]){0x01, 0xD1}, 2, 0},
+    {0x35, (uint8_t[]){0x00}, 1, 0},                   // TE on (param)
+    {0x53, (uint8_t[]){0x20}, 1, 10},
+    {0x63, (uint8_t[]){0xFF}, 1, 10},
+    {0x51, (uint8_t[]){0x00}, 1, 10},                  // Brightness 0 (will be set to 0xFF later)
+    {0x2A, (uint8_t[]){0x00, 0x16, 0x01, 0xAF}, 4, 0},  // Column address set (0x16..0x1AF)
+    {0x2B, (uint8_t[]){0x00, 0x00, 0x01, 0xF5}, 4, 0},  // Row address set (0..0x1F5)
+    {0x29, (uint8_t[]){0x00}, 0, 10},                  // Display on
+    {0x51, (uint8_t[]){0xFF}, 1, 0},                   // Brightness max
+};
+
+static lv_obj_t *s_label = NULL;
+static lv_obj_t *s_state = NULL;
+static lv_obj_t *s_bt = NULL;
+static lv_obj_t *s_bat = NULL;
+static lv_obj_t *s_gif_rec = NULL;
+
+static volatile bool s_connected = false;
+static volatile bool s_recording = false;
+static volatile bool s_error = false;
+
+static lv_timer_t *s_restore_timer = NULL;
+
+// Embedded PNGs (via EMBED_FILES in component CMakeLists.txt)
+extern const uint8_t bluetooh_off_24_png_start[] asm("_binary_bluetooh_off_24_png_start");
+extern const uint8_t bluetooh_off_24_png_end[]   asm("_binary_bluetooh_off_24_png_end");
+extern const uint8_t bluetooh_on_24_png_start[]  asm("_binary_bluetooh_on_24_png_start");
+extern const uint8_t bluetooh_on_24_png_end[]    asm("_binary_bluetooh_on_24_png_end");
+
+static bool s_bt_imgs_inited = false;
+static lv_img_dsc_t s_img_bt_off;
+static lv_img_dsc_t s_img_bt_on;
+
+// Embedded GIF (recording animation)
+extern const uint8_t voice_recording_gif_start[] asm("_binary_voice_recording_gif_start");
+extern const uint8_t voice_recording_gif_end[]   asm("_binary_voice_recording_gif_end");
+static bool s_gif_inited = false;
+static lv_img_dsc_t s_gif_rec_dsc;
+
+static void set_label_text(const char *text)
+{
+    if (!s_label) return;
+    lv_label_set_text(s_label, text ? text : "");
+}
+
+static void refresh_state(void)
+{
+    if (!s_state) return;
+    const char *txt = "";
+    if (s_error) txt = "ERR";
+    else if (s_recording) txt = "REC";
+    else if (s_connected) txt = "BLE";
+    else txt = "ADV";
+    lv_label_set_text(s_state, txt);
+}
+
+static void refresh_top_icons(void)
+{
+    if (s_bt) {
+        if (!s_bt_imgs_inited) {
+            memset(&s_img_bt_off, 0, sizeof(s_img_bt_off));
+            s_img_bt_off.header.magic = LV_IMAGE_HEADER_MAGIC;
+            s_img_bt_off.header.cf = LV_COLOR_FORMAT_RAW;
+            s_img_bt_off.header.w = 24;
+            s_img_bt_off.header.h = 24;
+            s_img_bt_off.header.stride = 0;
+            s_img_bt_off.data = bluetooh_off_24_png_start;
+            s_img_bt_off.data_size = (uint32_t)(bluetooh_off_24_png_end - bluetooh_off_24_png_start);
+
+            memset(&s_img_bt_on, 0, sizeof(s_img_bt_on));
+            s_img_bt_on.header.magic = LV_IMAGE_HEADER_MAGIC;
+            s_img_bt_on.header.cf = LV_COLOR_FORMAT_RAW;
+            s_img_bt_on.header.w = 24;
+            s_img_bt_on.header.h = 24;
+            s_img_bt_on.header.stride = 0;
+            s_img_bt_on.data = bluetooh_on_24_png_start;
+            s_img_bt_on.data_size = (uint32_t)(bluetooh_on_24_png_end - bluetooh_on_24_png_start);
+
+            s_bt_imgs_inited = true;
+        }
+
+        lv_image_set_src(s_bt, s_connected ? (const void *)&s_img_bt_on : (const void *)&s_img_bt_off);
+    }
+
+    if (s_bat) {
+        // Battery measurement is not wired yet in firmware; show explicit N/A.
+        lv_label_set_text(s_bat, LV_SYMBOL_BATTERY_FULL " N/A");
+        lv_obj_set_style_text_color(s_bat, lv_color_make(0xC0, 0xC0, 0xC0), 0);
+    }
+}
+
+static void restore_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    set_label_text("SONYA");
+    // one-shot
+    if (s_restore_timer) {
+        lv_timer_del(s_restore_timer);
+        s_restore_timer = NULL;
+    }
+}
+
+int ui_lvgl_init(void)
+{
+    // 1) Init LVGL port (creates task/timers/locking).
+    const lvgl_port_cfg_t lvgl_cfg = ESP_LVGL_PORT_INIT_CONFIG();
+    ESP_RETURN_ON_ERROR(lvgl_port_init(&lvgl_cfg), TAG, "lvgl_port_init");
+
+    // 2) Init display (SH8601 QSPI) and register it in LVGL.
+    const spi_bus_config_t buscfg = SH8601_PANEL_BUS_QSPI_CONFIG(
+        LCD_PIN_PCLK,
+        LCD_PIN_DATA0,
+        LCD_PIN_DATA1,
+        LCD_PIN_DATA2,
+        LCD_PIN_DATA3,
+        (LCD_H_RES * 80 * sizeof(uint16_t))
+    );
+    ESP_ERROR_CHECK(spi_bus_initialize(LCD_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO));
+
+    const esp_lcd_panel_io_spi_config_t io_config = SH8601_PANEL_IO_QSPI_CONFIG(LCD_PIN_CS, NULL, NULL);
+    ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)(uintptr_t)LCD_SPI_HOST, &io_config, &s_io));
+
+    sh8601_vendor_config_t vendor_config = {
+        .init_cmds = lcd_init_cmds,
+        .init_cmds_size = sizeof(lcd_init_cmds) / sizeof(lcd_init_cmds[0]),
+        .flags = {
+            .use_qspi_interface = 1,
+        },
+    };
+    const esp_lcd_panel_dev_config_t panel_config = {
+        .reset_gpio_num = LCD_PIN_RST,
+        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
+        .bits_per_pixel = 16,
+        .vendor_config = &vendor_config,
+    };
+    ESP_ERROR_CHECK(esp_lcd_new_panel_sh8601(s_io, &panel_config, &s_panel));
+    ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));
+    ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
+    ESP_ERROR_CHECK(esp_lcd_panel_set_gap(s_panel, LCD_X_GAP, LCD_Y_GAP));
+    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
+
+    // Avoid -Werror=missing-braces by assigning fields explicitly.
+    lvgl_port_display_cfg_t disp_cfg;
+    memset(&disp_cfg, 0, sizeof(disp_cfg));
+    disp_cfg.io_handle = s_io;
+    disp_cfg.panel_handle = s_panel;
+    disp_cfg.control_handle = NULL;
+    disp_cfg.buffer_size = LCD_H_RES * 80; // small chunk buffer (DMA)
+    disp_cfg.double_buffer = true;
+    disp_cfg.trans_size = 0;
+    disp_cfg.hres = LCD_H_RES;
+    disp_cfg.vres = LCD_V_RES;
+    disp_cfg.monochrome = false;
+    disp_cfg.rotation.swap_xy = false;
+    disp_cfg.rotation.mirror_x = false;
+    disp_cfg.rotation.mirror_y = false;
+    disp_cfg.rounder_cb = NULL;
+    disp_cfg.color_format = LV_COLOR_FORMAT_RGB565;
+    disp_cfg.flags.buff_dma = 1;
+    disp_cfg.flags.buff_spiram = 0;
+    disp_cfg.flags.sw_rotate = 0;
+    // Fix RGB565 byte order (otherwise red/blue swapped for images)
+    disp_cfg.flags.swap_bytes = 1;
+    disp_cfg.flags.full_refresh = 0;
+    disp_cfg.flags.direct_mode = 0;
+
+    s_disp = lvgl_port_add_disp(&disp_cfg);
+    if (!s_disp) {
+        ESP_LOGE(TAG, "lvgl_port_add_disp failed");
+        return -1;
+    }
+
+    // 3) Init touch (I2C) and register as LVGL input
+    ESP_RETURN_ON_ERROR(sonya_board_i2c_init(), TAG, "i2c init");
+    i2c_master_bus_handle_t bus = sonya_board_i2c_bus();
+    if (!bus) {
+        ESP_LOGE(TAG, "i2c bus null");
+        return -1;
+    }
+
+    const esp_lcd_touch_config_t tp_cfg = {
+        .x_max = LCD_H_RES,
+        .y_max = LCD_V_RES,
+        .rst_gpio_num = TOUCH_PIN_RST,
+        .int_gpio_num = TOUCH_PIN_INT,
+        .levels = {
+            .reset = 0,
+            .interrupt = 0,
+        },
+        .flags = {
+            .swap_xy = 0,
+            .mirror_x = 0,
+            .mirror_y = 0,
+        },
+    };
+    esp_lcd_panel_io_handle_t tp_io = NULL;
+    esp_lcd_panel_io_i2c_config_t tp_io_cfg = ESP_LCD_TOUCH_IO_I2C_FT5x06_CONFIG();
+    tp_io_cfg.scl_speed_hz = 400000;
+    ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_i2c(bus, &tp_io_cfg, &tp_io), TAG, "new_panel_io_i2c");
+    ESP_RETURN_ON_ERROR(esp_lcd_touch_new_i2c_ft5x06(tp_io, &tp_cfg, &s_touch), TAG, "touch_new");
+
+    const lvgl_port_touch_cfg_t touch_cfg = {
+        .disp = s_disp,
+        .handle = s_touch,
+    };
+    s_indev = lvgl_port_add_touch(&touch_cfg);
+    if (!s_indev) {
+        ESP_LOGE(TAG, "lvgl_port_add_touch failed");
+        return -1;
+    }
+
+    // Simple screen: big center label + small state badge.
+    lvgl_port_lock(0);
+    lv_obj_t *scr = lv_display_get_screen_active(s_disp);
+    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
+    lv_obj_set_style_text_color(scr, lv_color_white(), 0);
+
+    s_label = lv_label_create(scr);
+    lv_label_set_text(s_label, "SONYA");
+    lv_obj_set_style_text_font(s_label, &lv_font_montserrat_28, 0);
+    lv_obj_center(s_label);
+
+    // Recording GIF in center (hidden by default)
+    s_gif_rec = lv_gif_create(scr);
+    // Decode directly to RGB565 to match display and reduce artifacts
+    lv_gif_set_color_format(s_gif_rec, LV_COLOR_FORMAT_RGB565);
+    if (!s_gif_inited) {
+        memset(&s_gif_rec_dsc, 0, sizeof(s_gif_rec_dsc));
+        s_gif_rec_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+        s_gif_rec_dsc.header.cf = LV_COLOR_FORMAT_RAW; // raw GIF file data
+        s_gif_rec_dsc.header.w = 0;
+        s_gif_rec_dsc.header.h = 0;
+        s_gif_rec_dsc.header.stride = 0;
+        s_gif_rec_dsc.data = voice_recording_gif_start;
+        s_gif_rec_dsc.data_size = (uint32_t)(voice_recording_gif_end - voice_recording_gif_start);
+        s_gif_inited = true;
+    }
+    lv_gif_set_src(s_gif_rec, &s_gif_rec_dsc);
+    lv_obj_center(s_gif_rec);
+    lv_obj_add_flag(s_gif_rec, LV_OBJ_FLAG_HIDDEN);
+
+    s_state = lv_label_create(scr);
+    lv_label_set_text(s_state, "ADV");
+    lv_obj_set_style_text_font(s_state, &lv_font_montserrat_20, 0);
+    lv_obj_align(s_state, LV_ALIGN_TOP_LEFT, UI_X_PAD + UI_X_SHIFT_10P, UI_X_PAD + UI_TOP_Y_3P);
+
+    s_bt = lv_image_create(scr);
+    lv_obj_align(s_bt, LV_ALIGN_TOP_LEFT, UI_X_PAD + UI_X_SHIFT_10P, 36 + UI_TOP_Y_3P);
+
+    s_bat = lv_label_create(scr);
+    lv_obj_set_style_text_font(s_bat, &lv_font_montserrat_20, 0);
+    lv_obj_align(s_bat, LV_ALIGN_TOP_RIGHT, -(UI_X_PAD + UI_X_SHIFT_10P), UI_X_PAD + UI_TOP_Y_3P);
+
+    refresh_state();
+    refresh_top_icons();
+    lvgl_port_unlock();
+
+    ESP_LOGI(TAG, "init ok (lvgl)");
+    return 0;
+}
+
+void ui_lvgl_set_connected(bool connected)
+{
+    s_connected = connected;
+    lvgl_port_lock(0);
+    refresh_state();
+    refresh_top_icons();
+    lvgl_port_unlock();
+}
+
+void ui_lvgl_set_recording(bool recording)
+{
+    s_recording = recording;
+    lvgl_port_lock(0);
+    // Recording animation has priority over text messages
+    if (recording) {
+        if (s_restore_timer) {
+            lv_timer_del(s_restore_timer);
+            s_restore_timer = NULL;
+        }
+        if (s_label) lv_obj_add_flag(s_label, LV_OBJ_FLAG_HIDDEN);
+        if (s_gif_rec) {
+            lv_obj_clear_flag(s_gif_rec, LV_OBJ_FLAG_HIDDEN);
+            lv_gif_restart(s_gif_rec);
+        }
+    } else {
+        if (s_gif_rec) lv_obj_add_flag(s_gif_rec, LV_OBJ_FLAG_HIDDEN);
+        if (s_label) {
+            lv_obj_clear_flag(s_label, LV_OBJ_FLAG_HIDDEN);
+            set_label_text("SONYA");
+        }
+    }
+    refresh_state();
+    refresh_top_icons();
+    lvgl_port_unlock();
+}
+
+void ui_lvgl_set_error(bool error)
+{
+    s_error = error;
+    lvgl_port_lock(0);
+    refresh_state();
+    refresh_top_icons();
+    lvgl_port_unlock();
+}
+
+void ui_lvgl_show_message(const char *msg, uint32_t ms)
+{
+    // Minimal: show text and restore "SONYA" after timeout.
+    lvgl_port_lock(0);
+    set_label_text(msg);
+    if (s_restore_timer) {
+        lv_timer_del(s_restore_timer);
+        s_restore_timer = NULL;
+    }
+    if (ms > 0) {
+        s_restore_timer = lv_timer_create(restore_timer_cb, ms, NULL);
+    }
+    lvgl_port_unlock();
+}
+

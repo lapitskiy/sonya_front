@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Divider
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -72,6 +73,20 @@ fun SonyaWatchScreen(
             ) {
                 Text("Disconnect")
             }
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Checkbox(
+                checked = ui.autoConnect,
+                onCheckedChange = { viewModel.setAutoConnectEnabled(it) },
+            )
+            Spacer(Modifier.width(6.dp))
+            Text("Auto-connect", fontSize = 12.sp, color = Color.Gray)
         }
 
         Text(

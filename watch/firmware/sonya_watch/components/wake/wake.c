@@ -15,6 +15,7 @@
 #include "model_path.h"
 #include <string.h>
 #include <stdlib.h>
+#include <inttypes.h>
 
 static const char *TAG = "wake";
 
@@ -26,6 +27,9 @@ static TickType_t s_last_wake_tick = 0;
 static bool s_button_armed = true; // one trigger per press (wait for release)
 static TickType_t s_release_since_tick = 0; // require stable release before re-arming
 static TickType_t s_suspend_until_tick = 0;
+static TickType_t s_last_button_tick = 0;
+static TickType_t s_last_wwe_tick = 0;
+static TickType_t s_last_cmd_tick = 0;
 
 #define CMD_QUEUE_LEN 4
 #define CMD_MAX_LEN 32
@@ -150,6 +154,8 @@ static void wwe_fetch_task(void *arg)
     }
 
     ESP_LOGI(TAG, "WWE fetch start");
+    TickType_t last_hb = 0;
+    uint32_t hb_detect_cnt = 0;
     while (s_wwe_running) {
         if (is_suspended_now()) {
             vTaskDelay(pdMS_TO_TICKS(20));
@@ -166,15 +172,26 @@ static void wwe_fetch_task(void *arg)
             continue;
         }
 
+        // Heartbeat: show that fetch loop is alive (and whether we detect occasionally).
+        TickType_t now_tick = xTaskGetTickCount();
+        if (last_hb == 0) last_hb = now_tick;
+        if ((now_tick - last_hb) >= pdMS_TO_TICKS(5000)) {
+            // Note: we keep it tiny to avoid log spam.
+            ESP_LOGI(TAG, "WWE hb: det=%" PRIu32 " conf=%u", hb_detect_cnt, (unsigned)s_confidence);
+            last_hb = now_tick;
+            hb_detect_cnt = 0;
+        }
+
         if (res->wakeup_state == WAKENET_DETECTED) {
             TickType_t now = xTaskGetTickCount();
-            if (s_last_wake_tick != 0 && (now - s_last_wake_tick) < pdMS_TO_TICKS(1200)) {
+            if (s_last_wwe_tick != 0 && (now - s_last_wwe_tick) < pdMS_TO_TICKS(1200)) {
                 continue;
             }
-            s_last_wake_tick = now;
+            s_last_wwe_tick = now;
             s_confidence = 100;
             s_last_src = WAKE_SRC_WWE;
             s_wake_pending = true;
+            hb_detect_cnt++;
             ESP_LOGI(TAG, "WWE wake detected");
         }
     }
@@ -311,28 +328,16 @@ static int button_init(void)
 
 int wake_init(wake_mode_t mode)
 {
-#if defined(CONFIG_WAKE_MODE_CMD)
-    (void)mode;
-    s_mode = WAKE_MODE_CMD;
-#elif defined(CONFIG_WAKE_MODE_BUTTON)
-    (void)mode;
-    s_mode = WAKE_MODE_BUTTON;
-#elif defined(CONFIG_WAKE_MODE_WWE)
-    (void)mode;
-    s_mode = WAKE_MODE_WWE;
-#elif defined(CONFIG_WAKE_MODE_MULTI)
-    (void)mode;
-    s_mode = WAKE_MODE_MULTI;
-#else
-    (void)mode;
-    s_mode = WAKE_MODE_RMS;
-#endif
+    s_mode = mode;
     s_wake_pending = false;
     s_confidence = 100;
     s_last_wake_tick = 0;
     s_button_armed = true;
     s_release_since_tick = 0;
     s_suspend_until_tick = 0;
+    s_last_button_tick = 0;
+    s_last_wwe_tick = 0;
+    s_last_cmd_tick = 0;
     s_last_src = WAKE_SRC_NONE;
 
     if (s_mode == WAKE_MODE_CMD) {
@@ -394,10 +399,21 @@ bool wake_poll_or_wait(uint32_t timeout_ms)
         s_wake_pending = false;
         if ((s_mode == WAKE_MODE_BUTTON || s_mode == WAKE_MODE_MULTI) && !s_button_armed) return false;
         TickType_t now = xTaskGetTickCount();
-        if (s_last_wake_tick != 0 && (now - s_last_wake_tick) < pdMS_TO_TICKS(200)) {
-            return false;
+        if (s_last_src == WAKE_SRC_BUTTON) {
+            if (s_last_button_tick != 0 && (now - s_last_button_tick) < pdMS_TO_TICKS(200)) return false;
+            s_last_button_tick = now;
+            ESP_LOGI(TAG, "btn: gpio%d lvl=%d", CONFIG_WAKE_BUTTON_GPIO, gpio_get_level(CONFIG_WAKE_BUTTON_GPIO));
+        } else if (s_last_src == WAKE_SRC_WWE) {
+            if (s_last_wwe_tick != 0 && (now - s_last_wwe_tick) < pdMS_TO_TICKS(200)) return false;
+            s_last_wwe_tick = now;
+        } else if (s_last_src == WAKE_SRC_CMD) {
+            if (s_last_cmd_tick != 0 && (now - s_last_cmd_tick) < pdMS_TO_TICKS(200)) return false;
+            s_last_cmd_tick = now;
+        } else {
+            // legacy gate
+            if (s_last_wake_tick != 0 && (now - s_last_wake_tick) < pdMS_TO_TICKS(200)) return false;
+            s_last_wake_tick = now;
         }
-        s_last_wake_tick = now;
         if (s_mode == WAKE_MODE_BUTTON || s_mode == WAKE_MODE_MULTI) {
             s_button_armed = false;
             s_release_since_tick = 0;
@@ -413,6 +429,7 @@ bool wake_poll_or_wait(uint32_t timeout_ms)
         if (xQueueReceive(s_cmd_queue, buf, pdMS_TO_TICKS(timeout_ms)) == pdTRUE) {
             if (strcmp(buf, "START") == 0 || strcmp(buf, "REC") == 0) {
                 s_last_src = WAKE_SRC_CMD;
+                s_last_cmd_tick = xTaskGetTickCount();
                 return true;
             }
         }
@@ -423,7 +440,7 @@ bool wake_poll_or_wait(uint32_t timeout_ms)
             if (s_button_armed && poll_button()) {
                 s_button_armed = false;
                 TickType_t now = xTaskGetTickCount();
-                s_last_wake_tick = now;
+                s_last_button_tick = now;
                 s_release_since_tick = 0;
                 s_last_src = WAKE_SRC_BUTTON;
                 ESP_LOGI(TAG, "button trigger (poll)");

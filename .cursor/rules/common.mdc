@@ -7,13 +7,22 @@ alwaysApply: true
 
 Весь вывод коротко
 
-сам прошиввай сборку
+сам прошиввай сборку, но мониторт не смори я сам буду логи смотреть
+
+если com7 занят, сам его киляй черезй
+Get-CimInstance Win32_Process |
+>>   Where-Object { $_.CommandLine -match '(\\\.\\COM7|COM7)' } |
+>>   Select-Object ProcessId, Name, CommandLine
+
+Stop-Process -Id  -Force
 
 Суть причины в конце очень коротко
 
 не надо делать фаллбеков, задача должна решаться конкретно ингаче выводит ошибку или сообщение о не рабочем методе
 
 перезапускай и прошивай если необходимо сразу
+
+если нужен Espressif то он тут E:\Espressif\esp-idf-5.4.2
 
 At the end, also briefly write the essence of the problem and what was done:
 "Суть и что сделано: ...".

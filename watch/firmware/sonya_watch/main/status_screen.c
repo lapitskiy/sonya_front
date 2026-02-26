@@ -68,7 +68,7 @@ static inline uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b)
 #define FONT_W 5
 #define FONT_H 7
 #define FONT_CHAR_W (FONT_W + 1)  // 1px gap
-static const uint8_t font_5x7[12][5] = {
+static const uint8_t font_5x7[15][5] = {
     [0]  = {0x00,0x00,0x00,0x00,0x00},  // space
     [1]  = {0x7E,0x11,0x11,0x11,0x7E},  // A
     [2]  = {0x7F,0x49,0x49,0x49,0x36},  // B
@@ -81,15 +81,21 @@ static const uint8_t font_5x7[12][5] = {
     [9]  = {0x3E,0x41,0x41,0x41,0x3E},  // O
     [10] = {0x7F,0x09,0x19,0x29,0x46},  // R
     [11] = {0x70,0x08,0x07,0x08,0x70},  // V
+    [12] = {0x7F,0x08,0x08,0x08,0x7F},  // H
+    [13] = {0x41,0x41,0x7F,0x41,0x41},  // I
+    [14] = {0x07,0x08,0x70,0x08,0x07},  // Y
 };
 static int font_char_index(char c) {
     if (c == ' ') return 0;
     if (c >= 'A' && c <= 'E') return 1 + (c - 'A');
+    if (c == 'H') return 12;
+    if (c == 'I') return 13;
     if (c == 'K') return 6;
     if (c == 'L') return 7;
     if (c >= 'N' && c <= 'O') return 8 + (c - 'N');
     if (c == 'R') return 10;
     if (c == 'V') return 11;
+    if (c == 'Y') return 14;
     return 0;
 }
 
@@ -106,6 +112,9 @@ static int font_char_index(char c) {
 static char s_log[LOG_MAX_LINES][LOG_LINE_LEN];
 static int s_log_count = 0;   // number of valid lines (<= LOG_MAX_LINES)
 static int s_log_head = 0;    // index of newest line
+
+static char s_msg[LOG_LINE_LEN];
+static volatile TickType_t s_msg_until_tick = 0;
 
 static void log_add(const char *line)
 {
@@ -207,6 +216,14 @@ static esp_err_t render_log_screen(uint16_t fg, uint16_t bg)
     return ESP_OK;
 }
 
+static esp_err_t render_message_screen(const char *msg, uint16_t fg, uint16_t bg)
+{
+    ESP_RETURN_ON_ERROR(draw_solid(bg), TAG, "draw_solid");
+    int y = (LCD_V_RES / 2) - (LINE_H / 2);
+    if (y < 0) y = 0;
+    return draw_line_text(y, msg, fg, bg);
+}
+
 static esp_err_t draw_solid(uint16_t color565)
 {
     if (!s_panel) return ESP_ERR_INVALID_STATE;
@@ -245,12 +262,15 @@ static void task_screen(void *arg)
     bool last_conn = false;
     bool last_rec = false;
     bool last_err = false;
+    bool last_msg_active = false;
     bool first = true;
 
     for (;;) {
         bool conn = sonya_ble_is_connected();
         bool rec = s_recording;
         bool err = s_error;
+        TickType_t now = xTaskGetTickCount();
+        bool msg_active = (s_msg_until_tick != 0) && (now < s_msg_until_tick);
         bool changed = first;
 
         if (first) {
@@ -275,9 +295,16 @@ static void task_screen(void *arg)
             last_err = err;
         }
 
+        if (msg_active != last_msg_active) {
+            changed = true;
+            last_msg_active = msg_active;
+        }
+
         if (changed) {
             // Use a single (stable) palette; per-line coloring can be added later if needed.
-            esp_err_t e = render_log_screen(rgb565(230, 230, 230), rgb565(0, 0, 0));
+            esp_err_t e = msg_active
+                ? render_message_screen(s_msg, rgb565(230, 230, 230), rgb565(0, 0, 0))
+                : render_log_screen(rgb565(230, 230, 230), rgb565(0, 0, 0));
             if (e != ESP_OK) ESP_LOGW(TAG, "render failed: %s", esp_err_to_name(e));
         }
 
@@ -293,6 +320,27 @@ void status_screen_set_recording(bool recording)
 void status_screen_set_error(bool error)
 {
     s_error = error;
+}
+
+void status_screen_show_message(const char *msg, uint32_t ms)
+{
+    if (!msg || ms == 0) {
+        s_msg_until_tick = 0;
+        return;
+    }
+    // Copy & uppercase (we only have A-Z and space in the font).
+    int i = 0;
+    for (; i < LOG_LINE_LEN - 1 && msg[i]; i++) {
+        char c = msg[i];
+        if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+        if ((c >= 'A' && c <= 'Z') || c == ' ') {
+            s_msg[i] = c;
+        } else {
+            s_msg[i] = ' ';
+        }
+    }
+    s_msg[i] = '\0';
+    s_msg_until_tick = xTaskGetTickCount() + pdMS_TO_TICKS(ms);
 }
 
 void status_screen_init(void)

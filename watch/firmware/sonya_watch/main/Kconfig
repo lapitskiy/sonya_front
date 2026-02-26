@@ -93,6 +93,13 @@ menu "Sonya Watch Configuration"
               - recording: red (fast blink)
               - error: magenta (triple blink burst)
 
+    config UI_LVGL_ENABLE
+        bool "Enable LVGL UI (icons/menus)"
+        default n
+        help
+            Use LVGL-based UI (separate module) instead of the simple status screen.
+            This is intended for future menus/icons and touch UI.
+
     config I2S_BCK_GPIO
         int "I2S BCK GPIO"
         default 41

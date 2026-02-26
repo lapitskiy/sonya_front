@@ -12,6 +12,7 @@
 #include "nimble/nimble_port_freertos.h"
 #include "host/ble_hs.h"
 #include "host/ble_uuid.h"
+#include "host/util/util.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 #include "os/os_mbuf.h"
@@ -34,6 +35,7 @@ static void *rx_arg;
 static char device_name[32];
 static uint16_t tx_seq;
 static uint8_t tx_queue[256];
+static uint8_t s_own_addr_type;
 
 #define TX_QUEUE_MAX (sizeof(tx_queue) - PROTO_FRAME_HEADER_SIZE)
 // Pacing is important: back-to-back notifications can exhaust NimBLE mbufs on ESP32-S3,
@@ -156,7 +158,7 @@ static int start_advertising(void)
     adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
     adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
 
-    rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, NULL, BLE_HS_FOREVER,
+    rc = ble_gap_adv_start(s_own_addr_type, NULL, BLE_HS_FOREVER,
                            &adv_params, gap_event, NULL);
     if (rc) {
         ESP_LOGE(TAG, "adv start err %d", rc);
@@ -168,6 +170,17 @@ static int start_advertising(void)
 
 static void on_sync(void)
 {
+    // Ensure an identity address exists and pick the best one for advertising.
+    int rc = ble_hs_util_ensure_addr(0);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "ensure_addr failed rc=%d", rc);
+        return;
+    }
+    rc = ble_hs_id_infer_auto(0, &s_own_addr_type);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "infer_auto failed rc=%d", rc);
+        return;
+    }
     start_advertising();
 }
 

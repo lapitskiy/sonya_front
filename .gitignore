@@ -1,20 +1,26 @@
 *.iml
 .gradle
 /local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
+.idea/
 .DS_Store
 /build
+/app/build
 /captures
 .externalNativeBuild
 .cxx
 local.properties
 
-# ESP-IDF firmware subtree (Sonya watch)
+# Артефакты сборки Android
+*.apk
+*.aab
+*.ap_
+*.dex
+output.json
+
+# ESP-IDF firmware (Sonya watch)
 /watch/firmware/sonya_watch/build
+/watch/firmware/sonya_watch/managed_components
 /watch/firmware/sonya_watch/tools/**/.venv
 /watch/firmware/sonya_watch/**/__pycache__
+**/sdkconfig
+!watch/firmware/sonya_watch/sdkconfig.defaults

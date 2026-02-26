@@ -20,8 +20,8 @@ typedef enum {
 } wake_mode_t;
 
 /**
- * @brief Initialize wake engine (mode from Kconfig)
- * @param mode Ignored, use CONFIG_WAKE_MODE_* from menuconfig
+ * @brief Initialize wake engine (runtime-selected mode)
+ * @param mode Wake mode to use
  * @return 0 on success
  */
 int wake_init(wake_mode_t mode);
