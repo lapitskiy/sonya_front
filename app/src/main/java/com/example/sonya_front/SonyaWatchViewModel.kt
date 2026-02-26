@@ -73,43 +73,49 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
 
     @Volatile private var appVisible: Boolean = false
 
-    private val ble = SonyaWatchBleClient(
-        appCtx = app.applicationContext,
-        onLog = { appendLog(it) },
-        onConnectedChanged = { isConn ->
-            val cur = _ui.value
-            _ui.value = cur.copy(connected = isConn)
-            appendLog(if (isConn) "BLE connected" else "BLE disconnected")
-            if (isConn) {
-                // Distinguish "GATT connected" from "protocol is alive".
-                setEvent("BLE подключено (жду PONG)…")
-                // RX/TX characteristics might not be ready immediately; retry a couple of times.
-                viewModelScope.launch {
-                    delay(600L)
-                    sendPing()
-                    delay(1200L)
-                    if (_ui.value.connected) sendPing()
+    private lateinit var ble: SonyaWatchBleClient
+
+    init {
+        // NOTE: keep BLE client initialization out of property initializers.
+        // Otherwise Kotlin can hit recursive type checking because callbacks call methods that use `ble`.
+        ble = SonyaWatchBleClient(
+            appCtx = app.applicationContext,
+            onLog = { appendLog(it) },
+            onConnectedChanged = { isConn ->
+                val cur = _ui.value
+                _ui.value = cur.copy(connected = isConn)
+                appendLog(if (isConn) "BLE connected" else "BLE disconnected")
+                if (isConn) {
+                    // Distinguish "GATT connected" from "protocol is alive".
+                    setEvent("BLE подключено (жду PONG)…")
+                    // RX/TX characteristics might not be ready immediately; retry a couple of times.
+                    viewModelScope.launch {
+                        delay(600L)
+                        sendPing()
+                        delay(1200L)
+                        if (_ui.value.connected) sendPing()
+                    }
+                } else {
+                    // Reset protocol state so UI doesn't look "stuck".
+                    recording = false
+                    downloading = false
+                    expectedSeq = null
+                    pendingMeta = null
+                    pendingOffset = 0
+                    liveRecId = -1
+                    pullTimeoutJob?.cancel()
+                    pullTimeoutJob = null
+                    _ui.value = _ui.value.copy(downloadTotalBytes = 0, downloadOffsetBytes = 0, bytesTotal = 0)
+                    setEvent("Ожидаю подключения к часам…")
                 }
-            } else {
-                // Reset protocol state so UI doesn't look "stuck".
-                recording = false
-                downloading = false
-                expectedSeq = null
-                pendingMeta = null
-                pendingOffset = 0
-                liveRecId = -1
-                pullTimeoutJob?.cancel()
-                pullTimeoutJob = null
-                _ui.value = _ui.value.copy(downloadTotalBytes = 0, downloadOffsetBytes = 0, bytesTotal = 0)
-                setEvent("Ожидаю подключения к часам…")
-            }
-        },
-        onScanningChanged = { isScan ->
-            val cur = _ui.value
-            _ui.value = cur.copy(scanning = isScan)
-        },
-        onNotifyBytes = { bytes -> onNotify(bytes) }
-    )
+            },
+            onScanningChanged = { isScan ->
+                val cur = _ui.value
+                _ui.value = cur.copy(scanning = isScan)
+            },
+            onNotifyBytes = { bytes -> onNotify(bytes) }
+        )
+    }
 
     fun setAppVisible(visible: Boolean) {
         appVisible = visible
@@ -155,9 +161,17 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
         _ui.value = _ui.value.copy(downloadTotalBytes = 0, downloadOffsetBytes = 0, bytesTotal = 0)
     }
 
-    fun sendPing() = ble.writeAsciiCommand("PING")
-    fun sendSetRec2() = ble.writeAsciiCommand("SETREC:2")
-    fun sendRec() = ble.writeAsciiCommand("REC")
+    fun sendPing() {
+        ble.writeAsciiCommand("PING")
+    }
+
+    fun sendSetRec2() {
+        ble.writeAsciiCommand("SETREC:2")
+    }
+
+    fun sendRec() {
+        ble.writeAsciiCommand("REC")
+    }
 
     fun uploadLastWav() {
         val url = _ui.value.backendUrl.trim()
