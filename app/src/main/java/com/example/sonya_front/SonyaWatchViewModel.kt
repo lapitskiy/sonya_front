@@ -86,9 +86,9 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                 // RX/TX characteristics might not be ready immediately; retry a couple of times.
                 viewModelScope.launch {
                     delay(600L)
-                    ble.writeAsciiCommand("PING")
+                    sendPing()
                     delay(1200L)
-                    if (_ui.value.connected) ble.writeAsciiCommand("PING")
+                    if (_ui.value.connected) sendPing()
                 }
             } else {
                 // Reset protocol state so UI doesn't look "stuck".
