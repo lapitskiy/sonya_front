@@ -80,6 +80,29 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
             val cur = _ui.value
             _ui.value = cur.copy(connected = isConn)
             appendLog(if (isConn) "BLE connected" else "BLE disconnected")
+            if (isConn) {
+                // Distinguish "GATT connected" from "protocol is alive".
+                setEvent("BLE подключено (жду PONG)…")
+                // RX/TX characteristics might not be ready immediately; retry a couple of times.
+                viewModelScope.launch {
+                    delay(600L)
+                    ble.writeAsciiCommand("PING")
+                    delay(1200L)
+                    if (_ui.value.connected) ble.writeAsciiCommand("PING")
+                }
+            } else {
+                // Reset protocol state so UI doesn't look "stuck".
+                recording = false
+                downloading = false
+                expectedSeq = null
+                pendingMeta = null
+                pendingOffset = 0
+                liveRecId = -1
+                pullTimeoutJob?.cancel()
+                pullTimeoutJob = null
+                _ui.value = _ui.value.copy(downloadTotalBytes = 0, downloadOffsetBytes = 0, bytesTotal = 0)
+                setEvent("Ожидаю подключения к часам…")
+            }
         },
         onScanningChanged = { isScan ->
             val cur = _ui.value

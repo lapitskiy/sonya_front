@@ -39,3 +39,18 @@ CONFIG_UI_LVGL_ENABLE=y
 # LVGL fonts: make UI readable + allow symbol icons to be visible
 CONFIG_LV_FONT_MONTSERRAT_20=y
 CONFIG_LV_FONT_MONTSERRAT_28=y
+
+# LVGL widgets used by UI
+CONFIG_LV_USE_GIF=y
+
+# Keep firmware small: do not compile LVGL examples/demos
+# (we only use the library itself)
+# Note: must be applied via sdkconfig (defaults fill missing options).
+CONFIG_LV_BUILD_EXAMPLES=n
+CONFIG_LV_BUILD_DEMOS=n
+
+# Decode embedded PNG assets for lv_image
+CONFIG_LV_USE_LODEPNG=y
+
+# LVGL memory: use system malloc (PSRAM-capable) instead of tiny built-in pool
+CONFIG_LV_USE_CLIB_MALLOC=y

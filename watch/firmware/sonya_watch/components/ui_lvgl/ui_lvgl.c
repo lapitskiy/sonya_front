@@ -12,6 +12,7 @@
 
 #include "esp_log.h"
 #include "esp_check.h"
+#include "esp_heap_caps.h"
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 #include "esp_lcd_panel_ops.h"
@@ -101,6 +102,15 @@ extern const uint8_t voice_recording_gif_end[]   asm("_binary_voice_recording_gi
 static bool s_gif_inited = false;
 static lv_img_dsc_t s_gif_rec_dsc;
 
+static void diag_dump_heap(const char *where)
+{
+    uint32_t free_int = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    uint32_t free_8b  = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    uint32_t free_dma = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_DMA);
+    ESP_LOGI(TAG, "[diag] heap %s: internal=%u, dma=%u, 8bit=%u",
+             where ? where : "?", (unsigned)free_int, (unsigned)free_dma, (unsigned)free_8b);
+}
+
 static void set_label_text(const char *text)
 {
     if (!s_label) return;
@@ -166,9 +176,18 @@ static void restore_timer_cb(lv_timer_t *t)
 
 int ui_lvgl_init(void)
 {
+    ESP_LOGI(TAG, "ui_lvgl_init begin");
+    ESP_LOGI(TAG, "[diag] lvgl ver %d.%d.%d", lv_version_major(), lv_version_minor(), lv_version_patch());
+    diag_dump_heap("start");
+
     // 1) Init LVGL port (creates task/timers/locking).
     const lvgl_port_cfg_t lvgl_cfg = ESP_LVGL_PORT_INIT_CONFIG();
-    ESP_RETURN_ON_ERROR(lvgl_port_init(&lvgl_cfg), TAG, "lvgl_port_init");
+    esp_err_t err = lvgl_port_init(&lvgl_cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "lvgl_port_init failed: %s", esp_err_to_name(err));
+        return -1;
+    }
+    diag_dump_heap("after lvgl_port_init");
 
     // 2) Init display (SH8601 QSPI) and register it in LVGL.
     const spi_bus_config_t buscfg = SH8601_PANEL_BUS_QSPI_CONFIG(
@@ -179,9 +198,11 @@ int ui_lvgl_init(void)
         LCD_PIN_DATA3,
         (LCD_H_RES * 80 * sizeof(uint16_t))
     );
+    ESP_LOGI(TAG, "spi_bus_initialize");
     ESP_ERROR_CHECK(spi_bus_initialize(LCD_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO));
 
     const esp_lcd_panel_io_spi_config_t io_config = SH8601_PANEL_IO_QSPI_CONFIG(LCD_PIN_CS, NULL, NULL);
+    ESP_LOGI(TAG, "esp_lcd_new_panel_io_spi");
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)(uintptr_t)LCD_SPI_HOST, &io_config, &s_io));
 
     sh8601_vendor_config_t vendor_config = {
@@ -197,11 +218,15 @@ int ui_lvgl_init(void)
         .bits_per_pixel = 16,
         .vendor_config = &vendor_config,
     };
+    ESP_LOGI(TAG, "esp_lcd_new_panel_sh8601");
     ESP_ERROR_CHECK(esp_lcd_new_panel_sh8601(s_io, &panel_config, &s_panel));
+    ESP_LOGI(TAG, "panel_reset");
     ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));
+    ESP_LOGI(TAG, "panel_init");
     ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_set_gap(s_panel, LCD_X_GAP, LCD_Y_GAP));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
+    diag_dump_heap("after panel init");
 
     // Avoid -Werror=missing-braces by assigning fields explicitly.
     lvgl_port_display_cfg_t disp_cfg;
@@ -209,8 +234,9 @@ int ui_lvgl_init(void)
     disp_cfg.io_handle = s_io;
     disp_cfg.panel_handle = s_panel;
     disp_cfg.control_handle = NULL;
-    disp_cfg.buffer_size = LCD_H_RES * 80; // small chunk buffer (DMA)
-    disp_cfg.double_buffer = true;
+    // Must fit in DMA-capable internal RAM. Too big => lvgl_port_add_disp fails and screen stays black.
+    disp_cfg.buffer_size = LCD_H_RES * 40; // pixels
+    disp_cfg.double_buffer = false;
     disp_cfg.trans_size = 0;
     disp_cfg.hres = LCD_H_RES;
     disp_cfg.vres = LCD_V_RES;
@@ -233,8 +259,10 @@ int ui_lvgl_init(void)
         ESP_LOGE(TAG, "lvgl_port_add_disp failed");
         return -1;
     }
+    ESP_LOGI(TAG, "display registered in LVGL");
 
     // 3) Init touch (I2C) and register as LVGL input
+    ESP_LOGI(TAG, "i2c init");
     ESP_RETURN_ON_ERROR(sonya_board_i2c_init(), TAG, "i2c init");
     i2c_master_bus_handle_t bus = sonya_board_i2c_bus();
     if (!bus) {
@@ -272,10 +300,12 @@ int ui_lvgl_init(void)
         ESP_LOGE(TAG, "lvgl_port_add_touch failed");
         return -1;
     }
+    ESP_LOGI(TAG, "touch registered in LVGL");
 
     // Simple screen: big center label + small state badge.
     lvgl_port_lock(0);
     lv_obj_t *scr = lv_display_get_screen_active(s_disp);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
     lv_obj_set_style_text_color(scr, lv_color_white(), 0);
 
@@ -317,9 +347,15 @@ int ui_lvgl_init(void)
 
     refresh_state();
     refresh_top_icons();
+
+    // DIAG: avoid decoding assets in main task (can blow the stack).
+    if (!s_bt_imgs_inited) ESP_LOGW(TAG, "[diag] bt images not initialized");
+    ESP_LOGI(TAG, "[diag] assets: bt_off=%u bt_on=%u gif=%u",
+             (unsigned)s_img_bt_off.data_size, (unsigned)s_img_bt_on.data_size, (unsigned)s_gif_rec_dsc.data_size);
     lvgl_port_unlock();
 
-    ESP_LOGI(TAG, "init ok (lvgl)");
+    diag_dump_heap("end");
+    ESP_LOGI(TAG, "ui_lvgl_init ok");
     return 0;
 }
 

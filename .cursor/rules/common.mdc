@@ -7,14 +7,7 @@ alwaysApply: true
 
 Весь вывод коротко
 
-сам прошиввай сборку, но мониторт не смори я сам буду логи смотреть
-
-если com7 занят, сам его киляй черезй
-Get-CimInstance Win32_Process |
->>   Where-Object { $_.CommandLine -match '(\\\.\\COM7|COM7)' } |
->>   Select-Object ProcessId, Name, CommandLine
-
-Stop-Process -Id  -Force
+сам прошиввай сборку и мониторт смотри
 
 Суть причины в конце очень коротко
 
