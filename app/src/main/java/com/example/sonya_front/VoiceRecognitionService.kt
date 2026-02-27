@@ -739,18 +739,32 @@ class VoiceRecognitionService : Service() {
         deviceId: String,
     ) {
         try {
-            if (!resp.isSuccessful) return
+            if (!resp.isSuccessful) {
+                Log.d("API_CALL", "tryScheduleDirectAction: response not successful (${resp.code()}), skip")
+                return
+            }
             val raw = try { resp.body()?.string() } catch (_: Throwable) { null } ?: return
             val trimmed = raw.trim()
-            if (trimmed.isBlank() || trimmed == "null") return
+            Log.i("API_CALL", "tryScheduleDirectAction raw response: '$trimmed'")
+            if (trimmed.isBlank() || trimmed == "null") {
+                Log.d("API_CALL", "tryScheduleDirectAction: blank/null body, skip")
+                return
+            }
 
             val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
             val adapter = moshi.adapter(CommandResponseAction::class.java)
-            val parsed = try { adapter.fromJson(trimmed) } catch (_: Throwable) { null } ?: return
+            val parsed = try { adapter.fromJson(trimmed) } catch (e: Throwable) {
+                Log.w("API_CALL", "tryScheduleDirectAction: parse failed: ${e.message}")
+                null
+            } ?: return
 
             val type = parsed.type?.trim().orEmpty()
             val time = parsed.time?.trim().orEmpty()
-            if (type.isBlank() || time.isBlank()) return
+            Log.i("API_CALL", "tryScheduleDirectAction parsed: id=${parsed.id} type='$type' time='$time' text='${parsed.text}'")
+            if (type.isBlank() || time.isBlank()) {
+                Log.d("API_CALL", "tryScheduleDirectAction: type or time blank, skip")
+                return
+            }
 
             val actionId = parsed.id ?: 0
             if (actionId <= 0) {

@@ -41,6 +41,7 @@ object PendingActionsSync {
 
     suspend fun syncNow(context: Context, deviceId: String, reason: String) {
         if (deviceId.isBlank()) return
+        Log.i("SYNC", "syncNow start reason=$reason deviceId=$deviceId")
         try {
             val limit = 30
             var offset = 0
@@ -49,13 +50,19 @@ object PendingActionsSync {
             var storedTasksTotal = 0
 
             while (true) {
+                Log.d("SYNC", "Fetching pending-actions offset=$offset limit=$limit reason=$reason")
                 val resp = withContext(Dispatchers.IO) {
                     ApiClient.instance.getPendingActions(deviceId = deviceId, limit = limit, offset = offset)
                 }
                 val items = resp.items
+                Log.i("SYNC", "Got ${items.size} pending-actions (offset=$offset reason=$reason)")
                 if (items.isEmpty()) {
                     if (pulledTotal == 0) Log.d("SYNC", "No pending-actions (reason=$reason)")
                     break
+                }
+
+                for (a in items) {
+                    Log.d("SYNC", "  item id=${a.id} type=${a.type} time=${a.time} text=${a.text}")
                 }
 
                 pulledTotal += items.size
@@ -116,6 +123,7 @@ object PendingActionsSync {
                 }
 
                 val scheduledIds = PendingActionsScheduler.scheduleAll(context, deviceId, items)
+                Log.i("SYNC", "scheduleAll returned scheduledIds=$scheduledIds (reason=$reason)")
                 scheduledTotal += scheduledIds.size
 
                 // Retry ACK for locally scheduled items too:
@@ -126,6 +134,7 @@ object PendingActionsSync {
                     .filter { it > 0 && PendingActionStore.isScheduled(context, it) }
                     .toSet()
                 val ackScheduledIds = (scheduledIds + retryScheduledIds).toSet()
+                Log.i("SYNC", "Will ACK ids=$ackScheduledIds (new=${scheduledIds.size} retry=${retryScheduledIds.size} reason=$reason)")
 
                 // Ack each scheduled action (backend accepts per-item ack; idempotent).
                 for (id in ackScheduledIds) {
@@ -144,6 +153,7 @@ object PendingActionsSync {
                                 )
                             )
                         }
+                        Log.i("ACK", "ACK sent ok action_id=$id status=scheduled source=$reason")
                     } catch (t: Throwable) {
                         Log.w("ACK", "Failed to ack scheduled action_id=$id: ${t.message}")
                     }
@@ -158,7 +168,7 @@ object PendingActionsSync {
                 Log.i("SYNC", "Pulled=$pulledTotal scheduled=$scheduledTotal tasksStored=$storedTasksTotal (reason=$reason)")
             }
         } catch (t: Throwable) {
-            Log.w("SYNC", "Sync failed (reason=$reason): ${t.message}")
+            Log.e("SYNC", "Sync FAILED (reason=$reason): ${t.javaClass.simpleName}: ${t.message}", t)
         }
     }
 }

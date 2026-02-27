@@ -143,6 +143,7 @@ object PendingActionsScheduler {
     }
 
     fun scheduleAll(context: Context, deviceId: String, actions: List<PendingAction>): List<Int> {
+        Log.d("SCHED", "scheduleAll: ${actions.size} actions deviceId=$deviceId")
         val scheduledIds = mutableListOf<Int>()
 
         for (a in actions) {
@@ -174,11 +175,16 @@ object PendingActionsScheduler {
                 }
                 continue
             }
-            if (PendingActionStore.isHandled(context, a.id) || PendingActionStore.isScheduled(context, a.id)) {
+            val isHandled = PendingActionStore.isHandled(context, a.id)
+            val isScheduled = PendingActionStore.isScheduled(context, a.id)
+            if (isHandled || isScheduled) {
+                Log.d("SCHED", "Skip id=${a.id} type=${a.type}: isHandled=$isHandled isScheduled=$isScheduled")
                 continue
             }
 
+            Log.i("SCHED", "Scheduling id=${a.id} type=${a.type} time=${a.time}")
             val ok = scheduleOne(context, deviceId, a)
+            Log.i("SCHED", "scheduleOne result=$ok id=${a.id} type=${a.type}")
             if (ok) scheduledIds.add(a.id)
         }
 
@@ -228,17 +234,36 @@ object PendingActionsScheduler {
         val durationMsForUi: Long?
         when (normalizedType) {
             "timer", "text-timer" -> {
-                val durMs = parseDurationMs(a.time ?: return false) ?: return false
+                val timeStr = a.time
+                if (timeStr == null) {
+                    Log.e("SCHED", "scheduleOne FAIL id=${a.id} type=$normalizedType: time is null")
+                    return false
+                }
+                val durMs = parseDurationMs(timeStr)
+                if (durMs == null) {
+                    Log.e("SCHED", "scheduleOne FAIL id=${a.id} type=$normalizedType: parseDurationMs failed for '$timeStr'")
+                    return false
+                }
+                Log.d("SCHED", "scheduleOne timer id=${a.id} durMs=$durMs (${durMs/1000}s)")
                 alarmType = AlarmManager.ELAPSED_REALTIME_WAKEUP
                 triggerAtMs = SystemClock.elapsedRealtime() + durMs
                 triggerAtEpochMsForUi = System.currentTimeMillis() + durMs
                 durationMsForUi = durMs
             }
             "approx-alarm" -> {
-                val epochMs = parseDateTimeEpochMs(a.time ?: return false) ?: return false
+                val timeStr = a.time
+                if (timeStr == null) {
+                    Log.e("SCHED", "scheduleOne FAIL id=${a.id} type=$normalizedType: time is null")
+                    return false
+                }
+                val epochMs = parseDateTimeEpochMs(timeStr)
+                if (epochMs == null) {
+                    Log.e("SCHED", "scheduleOne FAIL id=${a.id} type=$normalizedType: parseDateTimeEpochMs failed for '$timeStr'")
+                    return false
+                }
                 val nowMs = System.currentTimeMillis()
                 if (epochMs <= nowMs) {
-                    Log.w("SCHED", "approx-alarm id=${a.id} time is in the past, skipping scheduling")
+                    Log.w("SCHED", "approx-alarm id=${a.id} time is in the past (epochMs=$epochMs nowMs=$nowMs), skipping scheduling")
                     PendingActionStore.markHandled(context, a.id)
                     return false
                 }
@@ -247,7 +272,10 @@ object PendingActionsScheduler {
                 triggerAtEpochMsForUi = epochMs
                 durationMsForUi = null
             }
-            else -> return false
+            else -> {
+                Log.e("SCHED", "scheduleOne FAIL id=${a.id}: unsupported type='$normalizedType'")
+                return false
+            }
         }
 
         try {
