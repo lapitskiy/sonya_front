@@ -34,7 +34,7 @@ static volatile bool s_is_recording = false;
 
 static inline bool btn_is_down(void)
 {
-#if defined(CONFIG_WAKE_MODE_BUTTON)
+#if defined(CONFIG_WAKE_MODE_BUTTON) || defined(CONFIG_WAKE_MODE_MULTI)
     int level = gpio_get_level(CONFIG_WAKE_BUTTON_GPIO);
 #if defined(CONFIG_WAKE_BUTTON_ACTIVE_HIGH)
     return level != 0;
@@ -48,7 +48,7 @@ static inline bool btn_is_down(void)
 
 static bool btn_released_stable_ms(int stable_ms)
 {
-#if defined(CONFIG_WAKE_MODE_BUTTON)
+#if defined(CONFIG_WAKE_MODE_BUTTON) || defined(CONFIG_WAKE_MODE_MULTI)
     const int max_wait_ms = 1500;
     int stable = 0;
     int total = 0;
@@ -101,7 +101,12 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
         pull_stream_handle_get(rec_id, off, want_len);
         break;
     case PROTO_CMD_DONE:
-        pull_stream_handle_done(rec_id);
+        if (rec_id == rec_store_cur_id()) {
+            pull_stream_handle_done(rec_id);
+            status_ui_show_ok(900);
+        } else {
+            pull_stream_handle_done(rec_id);
+        }
         break;
     default:
         ESP_LOGW(TAG, "RX: unknown cmd (%d bytes)", len);
@@ -136,7 +141,7 @@ static void send_rec_end_meta(void)
 
 /* ---- recording (BUTTON mode) ---- */
 
-#if defined(CONFIG_WAKE_MODE_BUTTON)
+#if defined(CONFIG_WAKE_MODE_BUTTON) || defined(CONFIG_WAKE_MODE_MULTI)
 static void record_button(int want)
 {
     TickType_t rec_start_tick = xTaskGetTickCount();
@@ -251,38 +256,99 @@ static void record_button(int want)
 
     ESP_LOGI(TAG, "REC_END bytes=%d", got);
 }
-#endif /* CONFIG_WAKE_MODE_BUTTON */
+#endif /* CONFIG_WAKE_MODE_BUTTON || CONFIG_WAKE_MODE_MULTI */
 
 /* ---- recording (CMD mode) ---- */
 
 #if !defined(CONFIG_WAKE_MODE_BUTTON)
 static void record_cmd(int cap_sec, int want)
 {
-    size_t buf_size = (size_t)want;
-    uint8_t *buf = (uint8_t *)heap_caps_malloc(buf_size, MALLOC_CAP_8BIT);
-    if (!buf) buf = (uint8_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!buf) {
-        ESP_LOGE(TAG, "REC_END reason: no mem for buffer (%u bytes)", (unsigned)buf_size);
-        status_ui_set_error(true);
-        if (sonya_ble_is_connected())
-            sonya_ble_send_evt_error("no mem");
-        return;
+    (void)cap_sec;
+    int got = 0;
+    TickType_t start_tick = xTaskGetTickCount();
+    TickType_t win_start = start_tick;
+    uint32_t win_samples = 0;
+    uint64_t win_sum_abs = 0;
+    uint16_t win_max_abs = 0;
+    uint32_t silent_ms = 0;
+    while (got < want) {
+        /* ensure we have a block with room */
+        size_t room = 0;
+        uint8_t *ptr = rec_store_tail_ptr(&room);
+        if (!ptr || room == 0) {
+            if (!rec_store_alloc_block()) {
+                ESP_LOGE(TAG, "REC_END reason: no mem got=%d", got);
+                status_ui_set_error(true);
+                if (sonya_ble_is_connected())
+                    sonya_ble_send_evt_error("no mem");
+                break;
+            }
+            ptr = rec_store_tail_ptr(&room);
+        }
+
+        int to_read = want - got;
+        if ((size_t)to_read > room) to_read = (int)room;
+        if (to_read > 1024) to_read = 1024;
+
+        int r = audio_cap_read(ptr, (size_t)to_read, 50);
+        if (r < 0) {
+            ESP_LOGE(TAG, "REC_END reason: audio_cap_read fail %d (got=%d)", r, got);
+            status_ui_set_error(true);
+            if (sonya_ble_is_connected())
+                sonya_ble_send_evt_error("audio read fail");
+            break;
+        }
+        if (r == 0) continue;
+        if (r & 1) r--;
+        if (r <= 0) continue;
+
+        /* silence detector (WWE/CMD only) */
+#if CONFIG_REC_STOP_ON_SILENCE
+        {
+            size_t n = (size_t)r / 2;
+            const int16_t *s = (const int16_t *)ptr;
+            for (size_t i = 0; i < n; i++) {
+                int16_t v = s[i];
+                uint16_t a = (uint16_t)(v < 0 ? (uint16_t)(-v) : (uint16_t)v);
+                win_sum_abs += a;
+                if (a > win_max_abs) win_max_abs = a;
+            }
+            win_samples += (uint32_t)n;
+
+            TickType_t now = xTaskGetTickCount();
+            if ((now - win_start) >= pdMS_TO_TICKS(500)) {
+                uint32_t avg_abs = (win_samples > 0) ? (uint32_t)(win_sum_abs / win_samples) : 0;
+                const uint16_t max_thr = (uint16_t)CONFIG_REC_SILENCE_MAXABS_THRESH;
+                uint32_t avg_thr = (uint32_t)max_thr / 6U;
+                if (avg_thr < 20U) avg_thr = 20U;
+                bool is_silence = (win_max_abs < max_thr) && (avg_abs < avg_thr);
+                if (is_silence) silent_ms += 500;
+                else silent_ms = 0;
+
+                TickType_t elapsed = now - start_tick;
+                ESP_LOGI(TAG, "cmd: win500ms maxAbs=%u avgAbs=%u thr(max=%u avg=%u) sil=%u silent_ms=%u got=%d",
+                         (unsigned)win_max_abs, (unsigned)avg_abs, (unsigned)max_thr, (unsigned)avg_thr,
+                         is_silence ? 1U : 0U, (unsigned)silent_ms, got);
+
+                win_start = now;
+                win_samples = 0;
+                win_sum_abs = 0;
+                win_max_abs = 0;
+
+                if (silent_ms >= (uint32_t)CONFIG_REC_SILENCE_STOP_MS &&
+                    elapsed >= pdMS_TO_TICKS(CONFIG_REC_SILENCE_MIN_RECORD_MS)) {
+                    ESP_LOGI(TAG, "REC_END reason: silence %ums", (unsigned)silent_ms);
+                    break;
+                }
+            }
+        }
+#endif
+
+        rec_store_tail_advance((size_t)r);
+        got += r;
     }
 
-    int rec_bytes = audio_cap_record_segment(buf, buf_size, cap_sec);
-    if (rec_bytes < 0) {
-        ESP_LOGE(TAG, "REC_END reason: record_segment fail %d", rec_bytes);
-        status_ui_set_error(true);
-        if (sonya_ble_is_connected())
-            sonya_ble_send_evt_error("audio record fail");
-        heap_caps_free(buf);
-        return;
-    }
-
-    rec_store_append(buf, (size_t)rec_bytes);
-    heap_caps_free(buf);
-
-    ESP_LOGI(TAG, "REC_END bytes=%d", rec_bytes);
+    ESP_LOGI(TAG, "REC_END bytes=%d", got);
 }
 #endif /* !CONFIG_WAKE_MODE_BUTTON */
 
@@ -345,7 +411,7 @@ void app_main(void)
         bool trig = wake_poll_or_wait(100);
         if (!trig) continue;
         TickType_t now = xTaskGetTickCount();
-#if defined(CONFIG_WAKE_MODE_BUTTON)
+#if defined(CONFIG_WAKE_MODE_BUTTON) || defined(CONFIG_WAKE_MODE_MULTI)
         ESP_LOGI(TAG, "wake trig: ticks=%lu ble=%d gpio=%d",
                  (unsigned long)now, sonya_ble_is_connected() ? 1 : 0,
                  gpio_get_level(CONFIG_WAKE_BUTTON_GPIO));
@@ -362,14 +428,24 @@ void app_main(void)
         }
         s_is_recording = true;
 
-        ESP_LOGI(TAG, "wake detected, confidence=%u", wake_get_confidence());
-#if defined(CONFIG_SR_WN_WN9_HEYIVY_TTS2)
-        ESP_LOGI(TAG, "ui: show 'HEY IVY' 10s");
-        status_ui_show_message("HEY IVY", 10 * 1000);
+        bool by_btn =
+#if defined(CONFIG_WAKE_MODE_BUTTON)
+            true;
+#elif defined(CONFIG_WAKE_MODE_MULTI)
+            wake_triggered_by_button();
 #else
-        ESP_LOGI(TAG, "ui: show 'WAKE' 10s");
-        status_ui_show_message("WAKE", 10 * 1000);
+            false;
 #endif
+
+        ESP_LOGI(TAG, "wake detected, confidence=%u", wake_get_confidence());
+        ESP_LOGI(TAG, "wake src: by_btn=%d (ble=%d)", by_btn ? 1 : 0, sonya_ble_is_connected() ? 1 : 0);
+        // For button-triggered record: show recording animation immediately (no text overlay).
+        if (by_btn) {
+            status_ui_set_recording(true);
+        } else {
+            ESP_LOGI(TAG, "ui: show 'WAKE' 10s");
+            status_ui_show_message("WAKE", 10 * 1000);
+        }
 #if defined(CONFIG_WAKE_MODE_BUTTON)
         if (!sonya_ble_is_connected()) {
             ESP_LOGW(TAG, "button trigger but BLE not connected -> ignore");
@@ -382,22 +458,31 @@ void app_main(void)
         if (sonya_ble_is_connected())
             sonya_ble_send_evt_wake();
 
-        int cap_sec =
+        int cap_sec;
 #if defined(CONFIG_WAKE_MODE_BUTTON)
-            REC_MAX_SEC;
+        cap_sec = REC_MAX_SEC;
+#elif CONFIG_REC_STOP_ON_SILENCE
+        cap_sec = REC_MAX_SEC;
 #else
-            s_rec_seconds;
+        cap_sec = s_rec_seconds;
 #endif
         if (cap_sec < 1) cap_sec = 1;
         if (cap_sec > REC_MAX_SEC) cap_sec = REC_MAX_SEC;
 
         // Prevent wake re-trigger while we're recording (WWE can keep detecting in background).
-        wake_suspend_ms((uint32_t)cap_sec * 1000U + 1500U);
+        const uint32_t tail_ms = 300;
+
+        uint32_t suspend_ms = (uint32_t)cap_sec * 1000U + tail_ms + 1500U;
+#if defined(CONFIG_WAKE_MODE_MULTI)
+        if (by_btn) suspend_ms = (uint32_t)REC_MAX_SEC * 1000U + tail_ms + 1500U;
+#endif
+        wake_suspend_ms(suspend_ms);
 
         int sr = CONFIG_AUDIO_SR;
-        int want = cap_sec * sr * 2;
+        int want = cap_sec * sr * 2 + (int)((tail_ms * (uint32_t)sr * 2U) / 1000U);
 
         ESP_LOGI(TAG, "REC_START cap=%d sec sr=%d want=%d", cap_sec, sr, want);
+        ESP_LOGI(TAG, "ui: recording on (src_btn=%d)", by_btn ? 1 : 0);
         status_ui_set_recording(true);
         status_ui_set_error(false);
         audio_cap_flush();
@@ -412,7 +497,27 @@ void app_main(void)
 #if defined(CONFIG_WAKE_MODE_BUTTON)
         record_button(want);
 #else
-        record_cmd(cap_sec, want);
+        if (
+#if defined(CONFIG_WAKE_MODE_MULTI)
+            by_btn
+#else
+            false
+#endif
+        ) {
+            int want_btn = REC_MAX_SEC * sr * 2 + (int)((tail_ms * (uint32_t)sr * 2U) / 1000U);
+            record_button(want_btn);
+        } else {
+            record_cmd(cap_sec, want);
+        }
+#endif
+
+        // If we were suspended for a long time (e.g. button hold in MULTI), cancel it now
+        // to allow immediate next press. Keep a short cooldown for bounce/WWE residuals.
+#if defined(CONFIG_WAKE_MODE_MULTI)
+        if (by_btn) {
+            wake_suspend_ms(0);
+            wake_suspend_ms(500);
+        }
 #endif
 
         pull_stream_stop_live();
@@ -427,6 +532,11 @@ void app_main(void)
         } else {
             ESP_LOGI(TAG, "recorded %d bytes (no BLE, dropped)", rec_store_total_bytes());
         }
+
+        // Clear long suspend immediately after finishing a recording.
+        // Keep a short cooldown to avoid bounce/residual WakeNet detections.
+        wake_suspend_ms(0);
+        wake_suspend_ms(700);
 
         s_is_recording = false;
     }

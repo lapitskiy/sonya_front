@@ -29,7 +29,11 @@ static TickType_t s_release_since_tick = 0; // require stable release before re-
 static TickType_t s_suspend_until_tick = 0;
 static TickType_t s_last_button_tick = 0;
 static TickType_t s_last_wwe_tick = 0;
+static TickType_t s_last_wwe_detect_tick = 0;
 static TickType_t s_last_cmd_tick = 0;
+static volatile uint32_t s_btn_isr_cnt = 0;
+static TaskHandle_t s_btn_dbg_task = NULL;
+static TickType_t s_last_btn_hb_tick = 0;
 
 #define CMD_QUEUE_LEN 4
 #define CMD_MAX_LEN 32
@@ -43,6 +47,11 @@ typedef enum {
 } wake_src_t;
 
 static volatile wake_src_t s_last_src = WAKE_SRC_NONE;
+
+bool wake_triggered_by_button(void)
+{
+    return s_last_src == WAKE_SRC_BUTTON;
+}
 
 /* ---- WakeNet (esp-sr) ---- */
 
@@ -63,6 +72,11 @@ static inline bool is_suspended_now(void)
 
 void wake_suspend_ms(uint32_t ms)
 {
+    if (ms == 0) {
+        s_suspend_until_tick = 0;
+        s_wake_pending = false;
+        return;
+    }
     TickType_t now = xTaskGetTickCount();
     s_suspend_until_tick = now + pdMS_TO_TICKS(ms);
     s_wake_pending = false;
@@ -184,10 +198,10 @@ static void wwe_fetch_task(void *arg)
 
         if (res->wakeup_state == WAKENET_DETECTED) {
             TickType_t now = xTaskGetTickCount();
-            if (s_last_wwe_tick != 0 && (now - s_last_wwe_tick) < pdMS_TO_TICKS(1200)) {
+            if (s_last_wwe_detect_tick != 0 && (now - s_last_wwe_detect_tick) < pdMS_TO_TICKS(1200)) {
                 continue;
             }
-            s_last_wwe_tick = now;
+            s_last_wwe_detect_tick = now;
             s_confidence = 100;
             s_last_src = WAKE_SRC_WWE;
             s_wake_pending = true;
@@ -212,7 +226,8 @@ static int wwe_start(void)
     }
 
     // Use "MR" even for single-mic boards: feed M from mic, R as zeros.
-    s_afe_cfg = afe_config_init("MR", s_models, AFE_TYPE_SR, AFE_MODE_LOW_COST);
+    // Prefer HIGH_PERF for better wake-word recall (more CPU, fewer misses).
+    s_afe_cfg = afe_config_init("MR", s_models, AFE_TYPE_SR, AFE_MODE_HIGH_PERF);
     if (!s_afe_cfg) {
         ESP_LOGE(TAG, "WWE afe_config_init failed");
         return -1;
@@ -224,6 +239,13 @@ static int wwe_start(void)
     s_afe_cfg->ns_init = false;
     s_afe_cfg->vad_init = false;
     s_afe_cfg->wakenet_init = true;
+
+    // Make WakeNet more aggressive (higher recall, potentially more false alarms).
+    s_afe_cfg->wakenet_mode = DET_MODE_95;
+
+    // Enable AGC for ASR using WakeNet-driven gain (helps when speech level varies).
+    s_afe_cfg->agc_init = true;
+    s_afe_cfg->agc_mode = AFE_AGC_MODE_WAKENET;
 
     if (!s_afe_cfg->wakenet_model_name) {
         ESP_LOGE(TAG, "WWE no wakenet_model_name (select WakeNet model in menuconfig -> ESP Speech Recognition)");
@@ -268,8 +290,50 @@ static int wwe_start(void)
 static void button_isr(void *arg)
 {
     (void)arg;
+    s_btn_isr_cnt++;
     s_last_src = WAKE_SRC_BUTTON;
     s_wake_pending = true;
+}
+
+static void btn_dbg_task_fn(void *arg)
+{
+    (void)arg;
+    int cfg_gpio = CONFIG_WAKE_BUTTON_GPIO;
+    int last_cfg = gpio_get_level(cfg_gpio);
+    int last0 = gpio_get_level(0);
+    int last1 = gpio_get_level(1);
+    uint32_t last_isr = s_btn_isr_cnt;
+    TickType_t start = xTaskGetTickCount();
+
+#if defined(CONFIG_WAKE_BUTTON_ACTIVE_HIGH)
+    ESP_LOGI(TAG, "btn_dbg: start cfg_gpio=%d active=HIGH (pressed=1)", cfg_gpio);
+#else
+    ESP_LOGI(TAG, "btn_dbg: start cfg_gpio=%d active=LOW (pressed=0)", cfg_gpio);
+#endif
+
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+        TickType_t now = xTaskGetTickCount();
+        if ((now - start) > pdMS_TO_TICKS(15000)) break;
+
+        int lvl_cfg = gpio_get_level(cfg_gpio);
+        int lvl0 = gpio_get_level(0);
+        int lvl1 = gpio_get_level(1);
+        uint32_t isr = s_btn_isr_cnt;
+
+        if (lvl_cfg != last_cfg || lvl0 != last0 || lvl1 != last1 || isr != last_isr) {
+            ESP_LOGI(TAG,
+                     "btn_dbg: cfg_gpio=%d lvl=%d armed=%d pending=%d isr_cnt=%" PRIu32 " gpio0=%d gpio1=%d",
+                     cfg_gpio, lvl_cfg, s_button_armed ? 1 : 0, s_wake_pending ? 1 : 0, isr, lvl0, lvl1);
+            last_cfg = lvl_cfg;
+            last0 = lvl0;
+            last1 = lvl1;
+            last_isr = isr;
+        }
+    }
+    ESP_LOGI(TAG, "btn_dbg: stop");
+    s_btn_dbg_task = NULL;
+    vTaskDelete(NULL);
 }
 
 static bool poll_button(void)
@@ -321,8 +385,26 @@ static int button_init(void)
         ESP_LOGE(TAG, "gpio_config fail %d", err);
         return -1;
     }
-    gpio_install_isr_service(0);
-    gpio_isr_handler_add(gpio, button_isr, NULL);
+    ESP_LOGI(TAG, "button init: gpio=%d lvl=%d intr=%s pull=%s",
+             gpio, gpio_get_level(gpio),
+#if defined(CONFIG_WAKE_BUTTON_ACTIVE_HIGH)
+             "POSEDGE", "PULLDOWN");
+#else
+             "NEGEDGE", "PULLUP");
+#endif
+
+    err = gpio_install_isr_service(0);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "gpio_install_isr_service: %s (%d)", esp_err_to_name(err), (int)err);
+    }
+    err = gpio_isr_handler_add(gpio, button_isr, NULL);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "gpio_isr_handler_add(gpio=%d): %s (%d)", gpio, esp_err_to_name(err), (int)err);
+    }
+
+    if (!s_btn_dbg_task) {
+        (void)xTaskCreate(btn_dbg_task_fn, "btn_dbg", 3072, NULL, 1, &s_btn_dbg_task);
+    }
     return 0;
 }
 
@@ -397,14 +479,18 @@ bool wake_poll_or_wait(uint32_t timeout_ms)
     }
     if (s_wake_pending) {
         s_wake_pending = false;
-        if ((s_mode == WAKE_MODE_BUTTON || s_mode == WAKE_MODE_MULTI) && !s_button_armed) return false;
+        /* In MULTI mode, button re-arm should NOT block WWE/CMD triggers. */
+        if ((s_mode == WAKE_MODE_BUTTON || s_mode == WAKE_MODE_MULTI) && !s_button_armed) {
+            if (s_last_src == WAKE_SRC_BUTTON) return false;
+            ESP_LOGW(TAG, "wake pending (%d) while button not armed -> allow (non-button src)",
+                     (int)s_last_src);
+        }
         TickType_t now = xTaskGetTickCount();
         if (s_last_src == WAKE_SRC_BUTTON) {
             if (s_last_button_tick != 0 && (now - s_last_button_tick) < pdMS_TO_TICKS(200)) return false;
             s_last_button_tick = now;
             ESP_LOGI(TAG, "btn: gpio%d lvl=%d", CONFIG_WAKE_BUTTON_GPIO, gpio_get_level(CONFIG_WAKE_BUTTON_GPIO));
         } else if (s_last_src == WAKE_SRC_WWE) {
-            if (s_last_wwe_tick != 0 && (now - s_last_wwe_tick) < pdMS_TO_TICKS(200)) return false;
             s_last_wwe_tick = now;
         } else if (s_last_src == WAKE_SRC_CMD) {
             if (s_last_cmd_tick != 0 && (now - s_last_cmd_tick) < pdMS_TO_TICKS(200)) return false;
@@ -414,7 +500,7 @@ bool wake_poll_or_wait(uint32_t timeout_ms)
             if (s_last_wake_tick != 0 && (now - s_last_wake_tick) < pdMS_TO_TICKS(200)) return false;
             s_last_wake_tick = now;
         }
-        if (s_mode == WAKE_MODE_BUTTON || s_mode == WAKE_MODE_MULTI) {
+        if ((s_mode == WAKE_MODE_BUTTON || s_mode == WAKE_MODE_MULTI) && s_last_src == WAKE_SRC_BUTTON) {
             s_button_armed = false;
             s_release_since_tick = 0;
         }
@@ -436,6 +522,17 @@ bool wake_poll_or_wait(uint32_t timeout_ms)
     } else if (s_mode == WAKE_MODE_BUTTON || s_mode == WAKE_MODE_MULTI) {
         uint32_t elapsed = 0;
         while (elapsed < timeout_ms) {
+            TickType_t now_tick = xTaskGetTickCount();
+            if (s_last_btn_hb_tick == 0) s_last_btn_hb_tick = now_tick;
+            if ((now_tick - s_last_btn_hb_tick) >= pdMS_TO_TICKS(2000)) {
+                ESP_LOGI(TAG, "btn_hb: gpio%d lvl=%d armed=%d pending=%d isr_cnt=%" PRIu32,
+                         CONFIG_WAKE_BUTTON_GPIO,
+                         gpio_get_level(CONFIG_WAKE_BUTTON_GPIO),
+                         s_button_armed ? 1 : 0,
+                         s_wake_pending ? 1 : 0,
+                         s_btn_isr_cnt);
+                s_last_btn_hb_tick = now_tick;
+            }
             if (s_wake_pending) break; // e.g. WWE detected while we were waiting
             if (s_button_armed && poll_button()) {
                 s_button_armed = false;
@@ -443,7 +540,8 @@ bool wake_poll_or_wait(uint32_t timeout_ms)
                 s_last_button_tick = now;
                 s_release_since_tick = 0;
                 s_last_src = WAKE_SRC_BUTTON;
-                ESP_LOGI(TAG, "button trigger (poll)");
+                ESP_LOGI(TAG, "button trigger (poll): gpio%d lvl=%d isr_cnt=%" PRIu32,
+                         CONFIG_WAKE_BUTTON_GPIO, gpio_get_level(CONFIG_WAKE_BUTTON_GPIO), s_btn_isr_cnt);
                 return true;
             }
             if (!s_button_armed) {

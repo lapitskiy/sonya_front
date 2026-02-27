@@ -96,8 +96,8 @@ static int init_mic_codec(int sr)
         ESP_LOGE(TAG, "esp_codec_dev_open(mic) failed: %d", err);
         return -1;
     }
-    // Default mic gain in dB. Keep conservative to avoid clipping.
-    (void)esp_codec_dev_set_in_gain(s_mic, 0.0f);
+    (void)esp_codec_dev_set_in_gain(s_mic, (float)CONFIG_AUDIO_IN_GAIN_DB);
+    ESP_LOGI(TAG, "mic gain: %d dB", (int)CONFIG_AUDIO_IN_GAIN_DB);
     return 0;
 }
 
@@ -125,8 +125,8 @@ static void capture_task_fn(void *arg)
                 frames_acc = 0;
             }
 
-            // Reduce log spam: log mic stats rarely (still useful to see "there is audio").
-            if (log_cnt++ % 200 == 0) { // ~1 line per few seconds
+            // Log mic stats at ~1Hz to correlate with spoken wake words.
+            if (log_cnt++ % 30 == 0) { // ~1 line per second at 16kHz/512 frames
                 int frames = (int)(r / 4);
                 const int16_t *lr = (const int16_t *)tmp;
                 int32_t maxL = 0, maxR = 0;
@@ -265,15 +265,26 @@ int audio_cap_init(void)
 int audio_cap_start(void)
 {
     if (!rx_handle) return -1;
-    esp_err_t err = ESP_OK;
-    if (s_tx_handle) {
-        err = i2s_channel_enable(s_tx_handle);
-        if (err) return -1;
+    // esp_codec_dev (via audio_codec_new_i2s_data + esp_codec_dev_open) may already
+    // enable the I2S channel. Make start idempotent by forcing a clean disable->enable.
+    esp_err_t err = i2s_channel_disable(rx_handle);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "i2s_channel_disable(rx) failed: %s (%d)", esp_err_to_name(err), (int)err);
+        return -1;
     }
+
     err = i2s_channel_enable(rx_handle);
-    if (err) return -1;
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "i2s_channel_enable(rx) failed: %s (%d)", esp_err_to_name(err), (int)err);
+        return -1;
+    }
     capturing = true;
-    xTaskCreate(capture_task_fn, "audio_cap", 6144, NULL, 5, &capture_task);
+    if (xTaskCreate(capture_task_fn, "audio_cap", 6144, NULL, 5, &capture_task) != pdPASS) {
+        ESP_LOGE(TAG, "xTaskCreate(audio_cap) failed");
+        capturing = false;
+        (void)i2s_channel_disable(rx_handle);
+        return -1;
+    }
     ESP_LOGI(TAG, "audio capture started");
     return 0;
 }

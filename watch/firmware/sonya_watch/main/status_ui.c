@@ -67,6 +67,12 @@ void status_ui_show_message(const char *msg, uint32_t ms)
     else status_screen_show_message(msg, ms);
 }
 
+void status_ui_show_ok(uint32_t ms)
+{
+    if (CONFIG_UI_LVGL_ENABLE) ui_lvgl_show_ok(ms);
+    else status_screen_show_message("OK", ms);
+}
+
 static void task_led(void *arg)
 {
     (void)arg;

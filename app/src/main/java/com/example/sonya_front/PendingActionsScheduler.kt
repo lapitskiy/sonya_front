@@ -234,6 +234,19 @@ object PendingActionsScheduler {
                 triggerAtEpochMsForUi = System.currentTimeMillis() + durMs
                 durationMsForUi = durMs
             }
+            "approx-alarm" -> {
+                val epochMs = parseDateTimeEpochMs(a.time ?: return false) ?: return false
+                val nowMs = System.currentTimeMillis()
+                if (epochMs <= nowMs) {
+                    Log.w("SCHED", "approx-alarm id=${a.id} time is in the past, skipping scheduling")
+                    PendingActionStore.markHandled(context, a.id)
+                    return false
+                }
+                alarmType = AlarmManager.RTC_WAKEUP
+                triggerAtMs = epochMs
+                triggerAtEpochMsForUi = epochMs
+                durationMsForUi = null
+            }
             else -> return false
         }
 
@@ -265,6 +278,7 @@ object PendingActionsScheduler {
             // Track in local UI store so user can see countdown / pending timers.
             val label = a.text ?: when (normalizedType) {
                 "timer", "text-timer" -> "Таймер"
+                "approx-alarm" -> "Напоминание"
                 else -> "Событие"
             }
             ActiveActionsStore.upsert(
@@ -303,9 +317,10 @@ object PendingActionsScheduler {
         val normalizedType = a.type.lowercase()
         val defaultTts = when (normalizedType) {
             "timer", "text-timer" -> a.text ?: "Таймер завершён"
+            "approx-alarm" -> a.text ?: "Напоминание"
             else -> a.text
         }
-        val defaultSound = normalizedType == "timer" || normalizedType == "text-timer"
+        val defaultSound = normalizedType == "timer" || normalizedType == "text-timer" || normalizedType == "approx-alarm"
         val defaultVibration = defaultSound
 
         val intent = Intent(context, PendingActionReceiver::class.java).apply {

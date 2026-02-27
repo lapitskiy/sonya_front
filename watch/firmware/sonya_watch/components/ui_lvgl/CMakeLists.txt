@@ -18,6 +18,5 @@ idf_component_register(
     EMBED_FILES
         "images/bluetooh_off_24.png"
         "images/bluetooh_on_24.png"
-        "gif/voice_recording.gif"
 )
 

@@ -39,6 +39,14 @@ bool wake_poll_or_wait(uint32_t timeout_ms);
 uint8_t wake_get_confidence(void);
 
 /**
+ * @brief Whether the last wake trigger came from the button.
+ *
+ * Useful in WAKE_MODE_MULTI to choose between hold-to-record (button) and
+ * fixed-duration record (WWE/CMD).
+ */
+bool wake_triggered_by_button(void);
+
+/**
  * @brief Notify wake engine of RX command (for CMD mode)
  * @param cmd Command string (e.g. "START")
  */
@@ -48,5 +56,6 @@ void wake_on_rx_cmd(const char *cmd);
  * @brief Temporarily ignore wake triggers (ms from now).
  *
  * Used to prevent re-trigger while we're recording.
+ * Pass 0 to cancel suspension immediately.
  */
 void wake_suspend_ms(uint32_t ms);

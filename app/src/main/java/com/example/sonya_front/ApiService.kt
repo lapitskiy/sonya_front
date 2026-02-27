@@ -107,6 +107,9 @@ data class CreateTaskRequest(
     val urgent: Boolean = false,
     val important: Boolean = false,
     val type: String? = null,
+    @param:Json(name = "due_date")
+    @field:Json(name = "due_date")
+    val dueDate: String? = null,
 )
 
 data class UpdateTaskRequest(

@@ -21,6 +21,7 @@
 #include "esp_lcd_touch_ft5x06.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 
 // LVGL port
 #include "esp_lvgl_port.h"
@@ -78,13 +79,35 @@ static lv_obj_t *s_label = NULL;
 static lv_obj_t *s_state = NULL;
 static lv_obj_t *s_bt = NULL;
 static lv_obj_t *s_bat = NULL;
-static lv_obj_t *s_gif_rec = NULL;
+static lv_obj_t *s_spinner = NULL;
+static lv_obj_t *s_ok = NULL;
 
 static volatile bool s_connected = false;
 static volatile bool s_recording = false;
 static volatile bool s_error = false;
 
 static lv_timer_t *s_restore_timer = NULL;
+
+static void ok_set_opa(void *obj, int32_t v)
+{
+    if (!obj) return;
+    if (v < 0) v = 0;
+    if (v > 255) v = 255;
+    lv_obj_set_style_opa((lv_obj_t *)obj, (lv_opa_t)v, LV_PART_MAIN);
+}
+
+typedef enum {
+    UI_EVT_RECORDING = 1,
+} ui_evt_type_t;
+
+typedef struct {
+    uint8_t type;
+    uint8_t val;
+    uint32_t tick_posted;
+} ui_evt_t;
+
+static QueueHandle_t s_evt_q = NULL;
+static TaskHandle_t s_evt_task = NULL;
 
 // Embedded PNGs (via EMBED_FILES in component CMakeLists.txt)
 extern const uint8_t bluetooh_off_24_png_start[] asm("_binary_bluetooh_off_24_png_start");
@@ -95,12 +118,6 @@ extern const uint8_t bluetooh_on_24_png_end[]    asm("_binary_bluetooh_on_24_png
 static bool s_bt_imgs_inited = false;
 static lv_img_dsc_t s_img_bt_off;
 static lv_img_dsc_t s_img_bt_on;
-
-// Embedded GIF (recording animation)
-extern const uint8_t voice_recording_gif_start[] asm("_binary_voice_recording_gif_start");
-extern const uint8_t voice_recording_gif_end[]   asm("_binary_voice_recording_gif_end");
-static bool s_gif_inited = false;
-static lv_img_dsc_t s_gif_rec_dsc;
 
 static void diag_dump_heap(const char *where)
 {
@@ -166,11 +183,78 @@ static void refresh_top_icons(void)
 static void restore_timer_cb(lv_timer_t *t)
 {
     (void)t;
+    if (s_spinner) lv_obj_add_flag(s_spinner, LV_OBJ_FLAG_HIDDEN);
+    if (s_ok) lv_obj_add_flag(s_ok, LV_OBJ_FLAG_HIDDEN);
+    if (!s_recording && s_label) lv_obj_clear_flag(s_label, LV_OBJ_FLAG_HIDDEN);
     set_label_text("SONYA");
     // one-shot
     if (s_restore_timer) {
         lv_timer_del(s_restore_timer);
         s_restore_timer = NULL;
+    }
+}
+
+static void ui_apply_recording_pre(void)
+{
+    lvgl_port_lock(0);
+    if (s_restore_timer) {
+        lv_timer_del(s_restore_timer);
+        s_restore_timer = NULL;
+    }
+    if (s_label) lv_obj_add_flag(s_label, LV_OBJ_FLAG_HIDDEN);
+    if (s_spinner) {
+        lv_obj_clear_flag(s_spinner, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(s_spinner);
+    }
+    refresh_state();
+    refresh_top_icons();
+    lvgl_port_unlock();
+}
+
+static void ui_apply_recording_stop(bool was)
+{
+    lvgl_port_lock(0);
+    if (s_spinner) lv_obj_add_flag(s_spinner, LV_OBJ_FLAG_HIDDEN);
+    if (was) {
+        if (s_restore_timer) {
+            lv_timer_del(s_restore_timer);
+            s_restore_timer = NULL;
+        }
+        s_restore_timer = lv_timer_create(restore_timer_cb, 900, NULL);
+        if (s_label) {
+            lv_obj_clear_flag(s_label, LV_OBJ_FLAG_HIDDEN);
+            set_label_text(LV_SYMBOL_OK " DONE");
+        }
+    } else if (s_label) {
+        lv_obj_clear_flag(s_label, LV_OBJ_FLAG_HIDDEN);
+        set_label_text("SONYA");
+    }
+    refresh_state();
+    refresh_top_icons();
+    lvgl_port_unlock();
+}
+
+static void ui_evt_task(void *arg)
+{
+    (void)arg;
+    ui_evt_t evt;
+
+    for (;;) {
+        if (xQueueReceive(s_evt_q, &evt, portMAX_DELAY) != pdTRUE) continue;
+        if (evt.type != UI_EVT_RECORDING) continue;
+
+        uint32_t now = (uint32_t)xTaskGetTickCount();
+        uint32_t lag = now - evt.tick_posted;
+        ESP_LOGI(TAG, "[ui_evt] recording=%d lag=%lums", evt.val ? 1 : 0, (unsigned long)(lag * portTICK_PERIOD_MS));
+
+        bool was = s_recording;
+        s_recording = evt.val ? true : false;
+
+        if (s_recording) {
+            ui_apply_recording_pre();
+        } else {
+            ui_apply_recording_stop(was);
+        }
     }
 }
 
@@ -234,9 +318,9 @@ int ui_lvgl_init(void)
     disp_cfg.io_handle = s_io;
     disp_cfg.panel_handle = s_panel;
     disp_cfg.control_handle = NULL;
-    // Must fit in DMA-capable internal RAM. Too big => lvgl_port_add_disp fails and screen stays black.
+    // Must fit in DMA-capable internal RAM. Use double buffering to reduce visible stutter/tearing on partial refresh.
     disp_cfg.buffer_size = LCD_H_RES * 40; // pixels
-    disp_cfg.double_buffer = false;
+    disp_cfg.double_buffer = true;
     disp_cfg.trans_size = 0;
     disp_cfg.hres = LCD_H_RES;
     disp_cfg.vres = LCD_V_RES;
@@ -314,24 +398,27 @@ int ui_lvgl_init(void)
     lv_obj_set_style_text_font(s_label, &lv_font_montserrat_28, 0);
     lv_obj_center(s_label);
 
-    // Recording GIF in center (hidden by default)
-    s_gif_rec = lv_gif_create(scr);
-    // Decode directly to RGB565 to match display and reduce artifacts
-    lv_gif_set_color_format(s_gif_rec, LV_COLOR_FORMAT_RGB565);
-    if (!s_gif_inited) {
-        memset(&s_gif_rec_dsc, 0, sizeof(s_gif_rec_dsc));
-        s_gif_rec_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
-        s_gif_rec_dsc.header.cf = LV_COLOR_FORMAT_RAW; // raw GIF file data
-        s_gif_rec_dsc.header.w = 0;
-        s_gif_rec_dsc.header.h = 0;
-        s_gif_rec_dsc.header.stride = 0;
-        s_gif_rec_dsc.data = voice_recording_gif_start;
-        s_gif_rec_dsc.data_size = (uint32_t)(voice_recording_gif_end - voice_recording_gif_start);
-        s_gif_inited = true;
-    }
-    lv_gif_set_src(s_gif_rec, &s_gif_rec_dsc);
-    lv_obj_center(s_gif_rec);
-    lv_obj_add_flag(s_gif_rec, LV_OBJ_FLAG_HIDDEN);
+    // Spinner (recording indicator), hidden by default
+    s_spinner = lv_spinner_create(scr);
+    lv_spinner_set_anim_params(s_spinner, 700, 270);
+    lv_obj_set_size(s_spinner, 120, 120);
+    lv_obj_center(s_spinner);
+    lv_obj_add_flag(s_spinner, LV_OBJ_FLAG_HIDDEN);
+    // Make spinner region opaque to avoid trails/tearing artifacts
+    lv_obj_set_style_bg_opa(s_spinner, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_spinner, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_arc_width(s_spinner, 12, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(s_spinner, lv_color_make(0x6A, 0x5A, 0xFF), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(s_spinner, lv_color_make(0x20, 0x20, 0x20), LV_PART_MAIN);
+
+    // OK checkmark (animated), hidden by default
+    s_ok = lv_label_create(scr);
+    lv_label_set_text(s_ok, LV_SYMBOL_OK);
+    lv_obj_set_style_text_font(s_ok, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_color(s_ok, lv_color_make(0x40, 0xE0, 0x40), 0);
+    lv_obj_center(s_ok);
+    lv_obj_set_style_opa(s_ok, LV_OPA_0, LV_PART_MAIN);
+    lv_obj_add_flag(s_ok, LV_OBJ_FLAG_HIDDEN);
 
     s_state = lv_label_create(scr);
     lv_label_set_text(s_state, "ADV");
@@ -350,9 +437,19 @@ int ui_lvgl_init(void)
 
     // DIAG: avoid decoding assets in main task (can blow the stack).
     if (!s_bt_imgs_inited) ESP_LOGW(TAG, "[diag] bt images not initialized");
-    ESP_LOGI(TAG, "[diag] assets: bt_off=%u bt_on=%u gif=%u",
-             (unsigned)s_img_bt_off.data_size, (unsigned)s_img_bt_on.data_size, (unsigned)s_gif_rec_dsc.data_size);
+    ESP_LOGI(TAG, "[diag] assets: bt_off=%u bt_on=%u",
+             (unsigned)s_img_bt_off.data_size, (unsigned)s_img_bt_on.data_size);
     lvgl_port_unlock();
+
+    // UI event queue + async worker (low priority) to avoid impacting audio capture.
+    if (!s_evt_q) {
+        s_evt_q = xQueueCreate(1, sizeof(ui_evt_t));
+        if (!s_evt_q) {
+            ESP_LOGE(TAG, "ui evt queue create failed");
+            return -1;
+        }
+        xTaskCreate(ui_evt_task, "ui_evt", 3072, NULL, 3, &s_evt_task);
+    }
 
     diag_dump_heap("end");
     ESP_LOGI(TAG, "ui_lvgl_init ok");
@@ -371,28 +468,16 @@ void ui_lvgl_set_connected(bool connected)
 void ui_lvgl_set_recording(bool recording)
 {
     s_recording = recording;
-    lvgl_port_lock(0);
-    // Recording animation has priority over text messages
-    if (recording) {
-        if (s_restore_timer) {
-            lv_timer_del(s_restore_timer);
-            s_restore_timer = NULL;
-        }
-        if (s_label) lv_obj_add_flag(s_label, LV_OBJ_FLAG_HIDDEN);
-        if (s_gif_rec) {
-            lv_obj_clear_flag(s_gif_rec, LV_OBJ_FLAG_HIDDEN);
-            lv_gif_restart(s_gif_rec);
-        }
-    } else {
-        if (s_gif_rec) lv_obj_add_flag(s_gif_rec, LV_OBJ_FLAG_HIDDEN);
-        if (s_label) {
-            lv_obj_clear_flag(s_label, LV_OBJ_FLAG_HIDDEN);
-            set_label_text("SONYA");
-        }
+    if (!s_evt_q) {
+        ESP_LOGW(TAG, "ui evt queue not ready (drop recording=%d)", recording ? 1 : 0);
+        return;
     }
-    refresh_state();
-    refresh_top_icons();
-    lvgl_port_unlock();
+    ui_evt_t evt = {
+        .type = UI_EVT_RECORDING,
+        .val = recording ? 1 : 0,
+        .tick_posted = (uint32_t)xTaskGetTickCount(),
+    };
+    xQueueOverwrite(s_evt_q, &evt);
 }
 
 void ui_lvgl_set_error(bool error)
@@ -416,6 +501,36 @@ void ui_lvgl_show_message(const char *msg, uint32_t ms)
     if (ms > 0) {
         s_restore_timer = lv_timer_create(restore_timer_cb, ms, NULL);
     }
+    lvgl_port_unlock();
+}
+
+void ui_lvgl_show_ok(uint32_t ms)
+{
+    lvgl_port_lock(0);
+    if (s_spinner) lv_obj_add_flag(s_spinner, LV_OBJ_FLAG_HIDDEN);
+
+    if (s_ok) {
+        lv_obj_clear_flag(s_ok, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(s_ok);
+        lv_obj_set_style_opa(s_ok, LV_OPA_0, LV_PART_MAIN);
+
+        lv_anim_t a;
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, s_ok);
+        lv_anim_set_exec_cb(&a, ok_set_opa);
+        lv_anim_set_values(&a, 0, 255);
+        lv_anim_set_time(&a, 160);
+        lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+        lv_anim_start(&a);
+    }
+
+    if (s_label) lv_obj_add_flag(s_label, LV_OBJ_FLAG_HIDDEN);
+
+    if (s_restore_timer) {
+        lv_timer_del(s_restore_timer);
+        s_restore_timer = NULL;
+    }
+    if (ms > 0) s_restore_timer = lv_timer_create(restore_timer_cb, ms, NULL);
     lvgl_port_unlock();
 }
 

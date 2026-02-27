@@ -11,4 +11,5 @@ void ui_lvgl_set_connected(bool connected);
 void ui_lvgl_set_recording(bool recording);
 void ui_lvgl_set_error(bool error);
 void ui_lvgl_show_message(const char *msg, uint32_t ms);
+void ui_lvgl_show_ok(uint32_t ms);
 

@@ -7,11 +7,49 @@ menu "Sonya Watch Configuration"
         help
             Fixed duration of audio recording after wake detection.
 
+    config REC_STOP_ON_SILENCE
+        bool "Stop recording on silence (WWE/CMD)"
+        default y
+        help
+            If enabled, WWE/CMD recordings can end early when a long silence is detected.
+
+    config REC_SILENCE_STOP_MS
+        int "Silence duration to stop (ms)"
+        default 3500
+        range 500 10000
+        depends on REC_STOP_ON_SILENCE
+        help
+            Stop WWE/CMD recording after this much consecutive silence.
+
+    config REC_SILENCE_MIN_RECORD_MS
+        int "Minimum record time before silence-stop (ms)"
+        default 800
+        range 0 5000
+        depends on REC_STOP_ON_SILENCE
+        help
+            Ignore silence-stop until at least this much audio has been recorded.
+
+    config REC_SILENCE_MAXABS_THRESH
+        int "Silence threshold (maxAbs)"
+        default 160
+        range 10 5000
+        depends on REC_STOP_ON_SILENCE
+        help
+            A 500ms window is considered silence when max absolute PCM sample value is below this threshold.
+
     config AUDIO_SR
         int "Audio sample rate (Hz)"
         default 16000
         help
             I2S microphone sample rate.
+
+    config AUDIO_IN_GAIN_DB
+        int "Microphone input gain (dB)"
+        default 18
+        range 0 30
+        help
+            Codec input gain in dB (esp_codec_dev_set_in_gain).
+            If recording is too quiet, increase (e.g. 18..24). Too high can clip.
 
     config CHUNK_SIZE
         int "BLE TX chunk payload size (bytes)"
@@ -47,7 +85,7 @@ menu "Sonya Watch Configuration"
     config WAKE_BUTTON_ACTIVE_HIGH
         bool "Button active high (pressed = GPIO high)"
         default n
-        depends on WAKE_MODE_BUTTON
+        depends on WAKE_MODE_BUTTON || WAKE_MODE_MULTI
         help
             n = active-low: BOOT typical, press=0 release=1. y = press=1 release=0.
 

@@ -60,15 +60,16 @@ object PendingActionsSync {
 
                 pulledTotal += items.size
 
-                // Special-case: plain "task" items should be saved into local Tasks list (no scheduling).
+                // Special-case: "task" and "approx-alarm" items → save into backend /tasks.
                 for (a in items) {
                     if (a.id <= 0) continue
-                    if (a.type.lowercase() != "task") continue
+                    val aType = a.type.lowercase()
+                    if (aType != "task" && aType != "approx-alarm") continue
                     if (PendingActionStore.isHandled(context, a.id)) continue
 
                     val desc = (a.text?.trim()).takeUnless { it.isNullOrBlank() } ?: "Задание #${a.id}"
 
-                    // Create in backend /tasks so it appears on Tasks page.
+                    // Create in backend /tasks so it appears on Tasks/Day page.
                     val score = interestRatio(a.interest) ?: 0.0
                     val urgent = score >= 0.80
                     val important = score >= 0.40
@@ -80,6 +81,7 @@ object PendingActionsSync {
                                     text = desc,
                                     urgent = urgent,
                                     important = important,
+                                    dueDate = if (aType == "approx-alarm") a.time else null,
                                 )
                             )
                         }
