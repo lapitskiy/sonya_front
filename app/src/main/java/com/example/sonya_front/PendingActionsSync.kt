@@ -118,8 +118,17 @@ object PendingActionsSync {
                 val scheduledIds = PendingActionsScheduler.scheduleAll(context, deviceId, items)
                 scheduledTotal += scheduledIds.size
 
+                // Retry ACK for locally scheduled items too:
+                // if initial ACK failed due to network, backend can stay "pending" forever.
+                val retryScheduledIds = items
+                    .asSequence()
+                    .map { it.id }
+                    .filter { it > 0 && PendingActionStore.isScheduled(context, it) }
+                    .toSet()
+                val ackScheduledIds = (scheduledIds + retryScheduledIds).toSet()
+
                 // Ack each scheduled action (backend accepts per-item ack; idempotent).
-                for (id in scheduledIds) {
+                for (id in ackScheduledIds) {
                     try {
                         withContext(Dispatchers.IO) {
                             ApiClient.instance.ack(
