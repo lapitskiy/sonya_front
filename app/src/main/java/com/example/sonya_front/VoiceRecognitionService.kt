@@ -788,7 +788,31 @@ class VoiceRecognitionService : Service() {
                 time = time,
                 text = parsed.text,
             )
-            PendingActionsScheduler.scheduleAll(applicationContext, deviceId, listOf(pa))
+            val scheduledIds = PendingActionsScheduler.scheduleAll(applicationContext, deviceId, listOf(pa))
+            // ACK each action scheduled via direct command response.
+            // Without this, backend status stays "pending" forever since syncNow won't see it in /pending-actions.
+            if (scheduledIds.isNotEmpty() && deviceId.isNotBlank()) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    for (id in scheduledIds) {
+                        try {
+                            ApiClient.instance.ack(
+                                AckRequest(
+                                    deviceId = deviceId,
+                                    actionId = id,
+                                    status = "scheduled",
+                                    ack = mapOf(
+                                        "reason" to "scheduled",
+                                        "source" to "direct_command_response",
+                                        "scheduled_at" to java.time.Instant.now().toString(),
+                                    )
+                                )
+                            )
+                        } catch (t: Throwable) {
+                            Log.w("ACK", "Failed to ack direct-action id=$id: ${t.message}")
+                        }
+                    }
+                }
+            }
         } catch (t: Throwable) {
             Log.w("API_CALL", "Direct-action parse/schedule failed: ${t.message}")
         }
