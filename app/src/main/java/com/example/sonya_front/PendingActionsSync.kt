@@ -138,6 +138,9 @@ object PendingActionsSync {
                     val desc = (a.text?.trim()).takeUnless { it.isNullOrBlank() } ?: "Задание #${a.id}"
                     val dueEpochMs = if (aType == "approx-alarm") parseEpochMs(a.time) else null
                     val dayType = if (aType == "approx-alarm" && dueEpochMs != null) dayTypeByEpochMs(dueEpochMs) else null
+                    val dueDate = if (aType == "approx-alarm" && dueEpochMs != null) {
+                        Instant.ofEpochMilli(dueEpochMs).atZone(ZoneId.systemDefault()).toLocalDate().toString()
+                    } else null
 
                     // Create in backend /tasks so it appears on Tasks/Day page.
                     val score = interestRatio(a.interest) ?: 0.0
@@ -152,7 +155,7 @@ object PendingActionsSync {
                                     urgent = urgent,
                                     important = important,
                                     type = dayType,
-                                    dueDate = if (aType == "approx-alarm") a.time else null,
+                                    dueDate = dueDate,
                                 )
                             )
                         }
