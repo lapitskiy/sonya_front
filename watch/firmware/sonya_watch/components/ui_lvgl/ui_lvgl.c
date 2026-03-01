@@ -80,12 +80,37 @@ static lv_obj_t *s_bt = NULL;
 static lv_obj_t *s_bat = NULL;
 static lv_obj_t *s_spinner = NULL;
 static lv_obj_t *s_ok = NULL;
+static lv_obj_t *s_color_test = NULL;
+static lv_timer_t *s_color_timer = NULL;
+static uint32_t s_color_idx = 0;
 
 static volatile bool s_connected = false;
 static volatile bool s_recording = false;
 static volatile bool s_error = false;
 
 static lv_timer_t *s_restore_timer = NULL;
+
+static void color_test_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (!s_color_test) return;
+
+    static const lv_color_t colors[] = {
+        LV_COLOR_MAKE(0xFF, 0x00, 0x00), // red
+        LV_COLOR_MAKE(0x00, 0xFF, 0x00), // green
+        LV_COLOR_MAKE(0x00, 0x00, 0xFF), // blue
+        LV_COLOR_MAKE(0xFF, 0xFF, 0xFF), // white
+        LV_COLOR_MAKE(0xFF, 0xFF, 0x00), // yellow
+        LV_COLOR_MAKE(0x00, 0xFF, 0xFF), // cyan
+        LV_COLOR_MAKE(0xFF, 0x00, 0xFF), // magenta
+    };
+    const uint32_t n = (uint32_t)(sizeof(colors) / sizeof(colors[0]));
+
+    lv_obj_set_style_bg_opa(s_color_test, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(s_color_test, colors[s_color_idx % n], 0);
+    lv_obj_move_foreground(s_color_test);
+    s_color_idx++;
+}
 
 static void task_panel_visible(void *arg)
 {
@@ -407,6 +432,17 @@ int ui_lvgl_init(void)
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
     lv_obj_set_style_text_color(scr, lv_color_white(), 0);
+
+    // Ultra-minimal panel test: one fullscreen object cycling pure colors.
+    s_color_test = lv_obj_create(scr);
+    lv_obj_remove_style_all(s_color_test);
+    lv_obj_set_size(s_color_test, LCD_H_RES, LCD_V_RES);
+    lv_obj_set_pos(s_color_test, 0, 0);
+    lv_obj_set_style_bg_opa(s_color_test, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(s_color_test, lv_color_make(0xFF, 0x00, 0x00), 0);
+    lv_obj_move_foreground(s_color_test);
+    if (!s_color_timer) s_color_timer = lv_timer_create(color_test_timer_cb, 400, NULL);
+    ESP_LOGI(TAG, "color test enabled: fullscreen color cycle");
 
     s_label = lv_label_create(scr);
     lv_label_set_text(s_label, "SONYA");
