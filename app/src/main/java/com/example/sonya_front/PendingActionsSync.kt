@@ -128,19 +128,14 @@ object PendingActionsSync {
 
                 pulledTotal += items.size
 
-                // Special-case: "task" and "approx-alarm" items → save into backend /tasks.
+                // Save into backend /tasks only explicit "task" items.
                 for (a in items) {
                     if (a.id <= 0) continue
                     val aType = a.type.lowercase()
-                    if (aType != "task" && aType != "approx-alarm") continue
+                    if (aType != "task") continue
                     if (PendingActionStore.isHandled(context, a.id)) continue
 
                     val desc = (a.text?.trim()).takeUnless { it.isNullOrBlank() } ?: "Задание #${a.id}"
-                    val dueEpochMs = if (aType == "approx-alarm") parseEpochMs(a.time) else null
-                    val dayType = if (aType == "approx-alarm" && dueEpochMs != null) dayTypeByEpochMs(dueEpochMs) else null
-                    val dueDate = if (aType == "approx-alarm" && dueEpochMs != null) {
-                        Instant.ofEpochMilli(dueEpochMs).atZone(ZoneId.systemDefault()).toLocalDate().toString()
-                    } else null
 
                     // Create in backend /tasks so it appears on Tasks/Day page.
                     val score = interestRatio(a.interest) ?: 0.0
@@ -154,8 +149,6 @@ object PendingActionsSync {
                                     text = desc,
                                     urgent = urgent,
                                     important = important,
-                                    type = dayType,
-                                    dueDate = dueDate,
                                 )
                             )
                         }
