@@ -652,9 +652,12 @@ private fun TasksScreen(
     var editingText by remember { mutableStateOf("") }
 
     val items = when (tasksTab) {
-        1 -> viewModel.tasksActive.value.filter { it.type?.lowercase() == "geo" }
+        1 -> viewModel.tasksActive.value.filter { it.type?.trim()?.lowercase() == "geo" }
         2 -> viewModel.tasksDone.value
-        else -> viewModel.tasksActive.value.filter { it.type?.lowercase() != "geo" }
+        else -> viewModel.tasksActive.value.filter {
+            val ty = it.type?.trim()?.lowercase()
+            ty == null || ty == "task"
+        }
     }
 
     LaunchedEffect(deviceId, tasksTab) {
