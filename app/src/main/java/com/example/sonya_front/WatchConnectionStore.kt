@@ -18,7 +18,9 @@ object WatchConnectionStore {
 
     fun setConnected(ctx: Context, connected: Boolean) {
         try {
-            prefs(ctx).edit().putBoolean(KEY_CONNECTED, connected).apply()
+            // commit(): service and BLE client may read this immediately
+            // (apply() can be delayed and is less predictable across components).
+            prefs(ctx).edit().putBoolean(KEY_CONNECTED, connected).commit()
         } catch (_: Throwable) {
             // ignore
         }

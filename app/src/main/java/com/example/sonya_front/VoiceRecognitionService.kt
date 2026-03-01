@@ -6,6 +6,8 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -929,7 +931,7 @@ class VoiceRecognitionService : Service() {
 
     private fun createNotification(): Notification {
         val wakeEnabled = UserSettingsStore.getWakeListeningEnabled(applicationContext)
-        val watchConnected = WatchConnectionStore.isConnected(applicationContext)
+        val watchConnected = WatchConnectionStore.isConnected(applicationContext) || isWatchConnectedBySystem()
         val text = when {
             wakeEnabled && watchConnected -> "Активна вейк фраза и часы"
             wakeEnabled && !watchConnected -> "Активна вейк фраза"
@@ -943,6 +945,35 @@ class VoiceRecognitionService : Service() {
             // Avoid adaptive mipmap launcher (XML) here: some OEM SystemUI fails to decode it.
             .setLargeIcon(BitmapFactory.decodeResource(resources, R.drawable.ico_64))
             .build()
+    }
+
+    private fun isWatchConnectedBySystem(): Boolean {
+        // If user connected watch at system Bluetooth level (paired/connected),
+        // but our BLE client isn't running, we still want "Часы активны".
+        return try {
+            val bm = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager ?: return false
+            val connected = bm.getConnectedDevices(BluetoothProfile.GATT)
+            if (connected.isEmpty()) return false
+
+            val lastAddr = try {
+                getSharedPreferences("sonya_watch_ble", Context.MODE_PRIVATE)
+                    .getString("last_addr", "")
+                    ?.trim()
+                    .orEmpty()
+            } catch (_: Throwable) {
+                ""
+            }
+
+            connected.any { dev ->
+                val addrOk = try { lastAddr.isNotBlank() && dev.address == lastAddr } catch (_: Throwable) { false }
+                val nameOk = try { dev.name == SonyaWatchProtocol.DEVICE_NAME } catch (_: Throwable) { false }
+                addrOk || nameOk
+            }
+        } catch (_: SecurityException) {
+            false
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     private fun updateForegroundNotification() {
