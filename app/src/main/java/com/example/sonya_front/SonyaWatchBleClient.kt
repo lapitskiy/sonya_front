@@ -524,7 +524,9 @@ class SonyaWatchBleClient(
     }
 
     private fun setConnected(v: Boolean) {
+        if (connected == v) return
         connected = v
+        WatchConnectionStore.setConnected(appCtx, v)
         mainHandler.post {
             onConnectedChanged(v)
         }

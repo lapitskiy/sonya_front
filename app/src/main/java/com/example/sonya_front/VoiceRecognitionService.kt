@@ -6,7 +6,10 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.ConnectivityManager
@@ -85,6 +88,8 @@ class VoiceRecognitionService : Service() {
 
     private var tts: TextToSpeech? = null
     @Volatile private var ttsReady: Boolean = false
+
+    private var watchConnReceiver: BroadcastReceiver? = null
 
     // Wake reaction phrase should be spoken BEFORE recording; we enter command mode only after TTS completes.
     @Volatile private var wakeTtsUtteranceId: String? = null
@@ -217,6 +222,7 @@ class VoiceRecognitionService : Service() {
 
         createNotificationChannel()
         startForeground(1, createNotification())
+        registerWatchConnectionReceiver()
         startLocationUpdates()
         startNetworkWatcher()
         setupRecognizers()
@@ -857,6 +863,7 @@ class VoiceRecognitionService : Service() {
                 mainHandler.removeCallbacks(wakeWordWatchdog)
                 stopWakeWordSafely()
                 broadcastStatusUpdate("Прослушка вейк-фразы отключена")
+                updateForegroundNotification()
             }
             ACTION_RESUME_WAKE -> {
                 Log.i("WAKEWORD", "Resume wake listening requested")
@@ -866,6 +873,7 @@ class VoiceRecognitionService : Service() {
                 if (!isContinuousListening) {
                     startWakeWord()
                 }
+                updateForegroundNotification()
             }
             ACTION_SPEAK -> {
                 val text = intent.getStringExtra(EXTRA_SPEAK_TEXT) ?: return START_STICKY
@@ -890,6 +898,7 @@ class VoiceRecognitionService : Service() {
         stopNetworkWatcher()
         stopWakeWordSafely()
         destroySpeechRecognizerSafely()
+        unregisterWatchConnectionReceiver()
         try {
             tts?.stop()
         } catch (_: Throwable) {
@@ -919,13 +928,61 @@ class VoiceRecognitionService : Service() {
     }
 
     private fun createNotification(): Notification {
+        val wakeEnabled = UserSettingsStore.getWakeListeningEnabled(applicationContext)
+        val watchConnected = WatchConnectionStore.isConnected(applicationContext)
+        val text = when {
+            wakeEnabled && watchConnected -> "Активна вейк фраза и часы"
+            wakeEnabled && !watchConnected -> "Активна вейк фраза"
+            !wakeEnabled && watchConnected -> "Часы активны"
+            else -> "Прослушка ключевой фразы выключена"
+        }
         return NotificationCompat.Builder(this, "VOICE_REC_CHANNEL")
             .setContentTitle("Соня активна")
-            .setContentText("Приложение слушает ключевую фразу.")
+            .setContentText(text)
             .setSmallIcon(R.drawable.ic_notification)
             // Avoid adaptive mipmap launcher (XML) here: some OEM SystemUI fails to decode it.
             .setLargeIcon(BitmapFactory.decodeResource(resources, R.drawable.ico_64))
             .build()
+    }
+
+    private fun updateForegroundNotification() {
+        try {
+            getSystemService(NotificationManager::class.java)?.notify(1, createNotification())
+        } catch (_: Throwable) {
+            // ignore
+        }
+    }
+
+    private fun registerWatchConnectionReceiver() {
+        if (watchConnReceiver != null) return
+        val r = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action != WatchConnectionStore.ACTION_WATCH_CONNECTION_CHANGED) return
+                updateForegroundNotification()
+            }
+        }
+        watchConnReceiver = r
+        val f = IntentFilter(WatchConnectionStore.ACTION_WATCH_CONNECTION_CHANGED)
+        try {
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(r, f, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("UnspecifiedRegisterReceiverFlag")
+                registerReceiver(r, f)
+            }
+        } catch (_: Throwable) {
+            watchConnReceiver = null
+        }
+    }
+
+    private fun unregisterWatchConnectionReceiver() {
+        val r = watchConnReceiver ?: return
+        watchConnReceiver = null
+        try {
+            unregisterReceiver(r)
+        } catch (_: Throwable) {
+            // ignore
+        }
     }
 
     private fun enterCommandMode() {
