@@ -1,48 +1,200 @@
-capture_start port=/dev/ttyACM0 baud=115200 max_lines=200
-I (38751) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=4I (377381) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=59 avg=16) R(max=60 avg=16)
-I (377891) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
-I (378341) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=76 avg=15) R(max=68 avg=15)
-I (379141) wake: WWE hb: det=0 conf=100
-I (379301) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=40 avg=10) R(max=40 avg=10)
-I (379931) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
-I (380261) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=147 avg=44) R(max=150 avg=44)
-I (381221) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=133 avg=28) R(max=137 avg=32)
-I (381971) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
-I (382181) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=244 avg=77) R(max=251 avg=78)
-I (382581) audio_cap_diag: eff_sr ~= 16017 Hz (frames=160256 dt=10005002us)
-I (383141) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=120 avg=27) R(max=120 avg=27)
-I (384011) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
-I (384101) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=243 avg=75) R(max=260 avg=75)
-I (384161) wake: WWE hb: det=0 conf=100
-I (385061) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=117 avg=28) R(max=125 avg=28)
-I (386021) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=204 avg=68) R(max=217 avg=70)
-I (386051) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
-I (386981) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=296 avg=96) R(max=321 avg=100)
-I (387941) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=33 avg=8) R(max=35 avg=7)
-I (388091) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
-I (388901) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=99 avg=25) R(max=97 avg=25)
-I (389161) wake: WWE hb: det=0 conf=100
-I (389861) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=215 avg=60) R(max=217 avg=60)
-I (390131) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
-I (390821) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=235 avg=60) R(max=241 avg=60)
-I (391781) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=128 avg=21) R(max=129 avg=21)
-I (392171) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
-I (392601) audio_cap_diag: eff_sr ~= 15993 Hz (frames=160256 dt=10020009us)
-I (392741) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=73 avg=22) R(max=69 avg=23)
-I (393701) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=84 avg=30) R(max=89 avg=31)
-I (394181) wake: WWE hb: det=0 conf=100
-I (394211) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
-I (394661) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=28 avg=8) R(max=27 avg=8)
-I (395621) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=350 avg=91) R(max=360 avg=93)
-I (396251) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
-I (396581) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=168 avg=56) R(max=163 avg=56)
-I (397541) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=293 avg=74) R(max=298 avg=75)
-I (398291) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
-I (398501) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=122 avg=48) R(max=129 avg=48)
-I (399211) wake: WWE hb: det=0 conf=100
-I (399461) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=187 avg=32) R(max=166 avg=35)
-I (400331) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
-I (400421) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=265 avg=77) R(max=255 avg=77)
-I (401381) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=151 avg=38) R(max=165 avg=39)
-I (402341) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=186 avg=53) R(max=219 avg=51)
-I (402371) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0x15 (USB_UART_CHIP_RESET),boot:0x2b (SPI_FAST_FLASH_BOOT)
+Saved PC:0x4038182e
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce2810,len:0x1564
+load:0x403c8700,len:0x4
+load:0x403c8704,len:0xd24
+load:0x403cb700,len:0x2ed4
+entry 0x403c8928
+I (26) boot: ESP-IDF v5.4.2 2nd stage bootloader
+I (27) boot: compile time Mar  1 2026 17:21:49
+I (27) boot: Multicore bootloader
+I (27) boot: chip revision: v0.2
+I (30) boot: efuse block revision: v1.3
+I (33) boot.esp32s3: Boot SPI Speed : 80MHz
+I (37) boot.esp32s3: SPI Mode       : DIO
+I (41) boot.esp32s3: SPI Flash Size : 8MB
+I (45) boot: Enabling RNG early entropy source...
+I (49) boot: Partition Table:
+I (52) boot: ## Label            Usage          Type ST Offset   Length
+I (58) boot:  0 nvs              WiFi data        01 02 00009000 00006000
+I (65) boot:  1 phy_init         RF data          01 01 0000f000 00001000
+I (71) boot:  2 factory          factory app      00 00 00010000 00400000
+I (78) boot:  3 model            Unknown data     01 06 00410000 00200000
+I (84) boot: End of partition table
+I (87) esp_image: segment 0: paddr=00010020 vaddr=3c0c0020 size=237dch (145372) map
+I(2)epiae emn:pdr0030 ad=f900sz0a0  73)la (26 ep_mae:semet : adr=00a2c adr=037400 iz=0e0h  207) oa
+I (132) esp_image: segment 3: paddr=00040020 vaddr=42000020 size=baa6ch (764524) map
+I (267) esp_image: segment 4: paddr=000faa94 vaddr=40379e0c size=15148h ( 86344) load
+I (286) esp_image: segment 5: paddr=0010fbe4 vaddr=600fe000 size=0001ch (    28) load
+I (297) boot: Loaded app from partition at offset 0x10000
+I (298) boot: Disabling RNG early entropy source...
+I (308) octal_psram: vendor id    : 0x0d (AP)
+I (308) octal_psram: dev id       : 0x02 (generation 3)
+I (308) octal_psram: density      : 0x03 (64 Mbit)
+I (310) octal_psram: good-die     : 0x01 (Pass)
+I (314) octal_psram: Latency      : 0x01 (Fixed)
+I (319) octal_psram: VCC          : 0x01 (3V)
+I (323) octal_psram: SRF          : 0x01 (Fast Refresh)
+I (328) octal_psram: BurstType    : 0x01 (Hybrid Wrap)
+I (332) octal_psram: BurstLen     : 0x01 (32 Byte)
+I (337) octal_psram: Readlatency  : 0x02 (10 cycles@Fixed)
+I (342) octal_psram: DriveStrength: 0x00 (1/1)
+I (347) MSPI Timing: PSRAM timing tuning index: 5
+I (351) esp_psram: Found 8MB PSRAM device
+I (354) esp_psram: Speed: 80MHz
+I (357) cpu_start: Multicore app
+I (793) esp_psram: SPI SRAM memory test OK
+I (802) cpu_start: Pro cpu start user code
+I (802) cpu_start: cpu freq: 160000000 Hz
+I (802) app_init: Application information:
+I (802) app_init: Project name:     sonya_watch
+I (806) app_init: App version:      d98ca5c-dirty
+I (811) app_init: Compile time:     Mar  1 2026 18:42:54
+I (816) app_init: ELF file SHA256:  f29d6ec87...
+I (820) app_init: ESP-IDF:          v5.4.2
+I (824) efuse_init: Min chip rev:     v0.0
+I (828) efuse_init: Max chip rev:     v0.99
+I (832) efuse_init: Chip rev:         v0.2
+I (836) heap_init: Initializing. RAM available for dynamic allocation:
+I (842) heap_init: At 3FCA8138 len 000415D8 (261 KiB): RAM
+I (847) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
+I (852) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
+I (857) heap_init: At 600FE01C len 00001FCC (7 KiB): RTCRAM
+I (863) esp_psram: Adding pool of 8192K of PSRAM memory to heap allocator
+I (870) spi_flash: detected chip: gd
+I (872) spi_flash: flash io: dio
+W (875) spi_flash: Detected size(32768k) larger than the size in the binary image header(8192k). Using the size in the binary image header.
+I (888) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (894) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (901) coexist: coex firmware version: 7b9a184
+I (905) coexist: coexist rom version e7ae62f
+I (909) main_task: Started on CPU0
+I (919) esp_psram: Reserving pool of 32K of internal memory for DMA/internal allocations
+I (919) main_task: Calling app_main()
+I (919) main: boot
+I (929) main: reset reason: USB (11)
+I (939) main: NVS ok
+I (939) sonya_board: I2C bus init ok: SDA=15 SCL=14
+I (939) sonya_pmu: PMU ok: DC1=1 ALDO4=1 BLDO2=1 batt=-1%
+I (1089) BLE_INIT: BT controller compile version [6cfabcd]
+I (1089) BLE_INIT: Feature Config, ADV:1, BLE_50:1, DTM:1, SCAN:1, CCA:0, SMP:1, CONNECT:1
+I (1089) BLE_INIT: Bluetooth MAC: 1c:db:d4:7a:f4:46
+I (1089) phy_init: phy_version 701,f4f1da3a,Mar  3 2025,15:50:10
+I (1139) NimBLE: GAP procedure initiated: stop advertising.
+I (1139) NimBLE: Failed to restore IRKs from store; status=8
+I (1139) NimBLE: GAP procedure initiated: advertise;
+I (1139) NimBLE: disc_mode=2
+I (1149) NimBLE:  adv_channel_map=0 own_addr_type=0 adv_filter_policy=0 adv_itvl_min=0 adv_itvl_max=0
+I (1149) NimBLE:
+I (1159) sonya_ble: BLE advertising started, name=SONYA-WATCH
+I (1159) sonya_ble: BLE init done
+I (1159) main: BLE up
+I (1169) status_ui: status LED disabled (CONFIG_STATUS_LED_GPIO=-1)
+I (1169) status_screen: init
+I (1179) status_screen: init QSPI bus
+I (1179) status_screen: install panel IO
+I (1179) status_screen: panel io: pclk=40000000 spi_mode=0 cmd_bits=32 param_bits=8
+I (1189) status_screen: lcd rx 0x04 id: ESP_OK FF FF FF
+I (1189) status_screen: lcd rx 0x09 st: ESP_OK FF FF FF FF
+I (1199) status_screen: install SH8601 panel
+I (1199) gpio: GPIO[8]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0
+I (1209) sh8601: LCD panel create success, version: 1.0.2
+I (1559) status_screen: lcd rx 0x0A power_mode: ESP_OK FF
+I (1559) status_screen: lcd rx 0x0D display_mode: ESP_OK FF
+I (1559) status_screen: hw blink test start
+hb no_uart_data_for=2s
+I (4169) status_screen: hw blink test done
+I (4179) ES7210: Work in Slave mode
+I (4189) ES7210: Enable ES7210_INPUT_MIC1
+I (4189) ES7210: Enable ES7210_INPUT_MIC2
+E (4199) i2s_common: i2s_channel_disable(1200): the channel has not been enabled yet
+I (4199) I2S_IF: channel mode 0 bits:16/16 channel:2 mask:3
+I (4199) I2S_IF: STD Mode 0 bits:16/16 channel:2 sample_rate:16000 mask:3
+E (4209) i2s_common: i2s_channel_disable(1200): the channel has not been enabled yet
+I (4209) I2S_IF: channel mode 0 bits:16/16 channel:2 mask:3
+I (4219) I2S_IF: STD Mode 1 bits:16/16 channel:2 sample_rate:16000 mask:3
+I (4229) ES7210: Bits 16
+I (4229) ES7210: Enable ES7210_INPUT_MIC1
+I (4239) ES7210: Enable ES7210_INPUT_MIC2
+I (4249) ES7210: Unmuted
+I (4249) Adev_Codec: Open codec device OK
+I (4249) audio_cap: mic gain: 18 dB
+I (4249) audio_cap: audio_cap init: 16000 Hz, bck=41 ws=45 din=42 mclk=16 (codec via esp_codec_dev)
+I (4249) audio_cap: audio capture started
+I (4259) main: audio capture running
+I (4259) gpio: GPIO[0]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:2
+I (4269) wake: button init: gpio=0 lvl=1 intr=NEGEDGE pull=PULLUP
+I (4269) MODEL_LOADER: The storage free size is 23616 KB
+I (4279) wake: btn_dbg: start cfg_gpio=0 active=LOW (pressed=0)
+I (4279) MODEL_LOADER: The partition size is 2048 KB
+I (4289) MODEL_LOADER: Successfully load srmodels
+I (4289) AFE_CONFIG: Set WakeNet Model: wn9_hijoy_tts
+I (4299) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=0 avg=0) R(max=0 avg=0)
+I (4309) wake: WWE wake words: Hi,Joy
+W (4309) AFE_CONFIG: Noise Supression may reduce the accuracy of speech recognition. It is not recommended to turn it on.
+MC Quantized wakenet9: wakenet9l_tts1h8_Hi,Joy_3_0.631_0.633, tigger:v4, mode:0, p:0, (Dec 16 2025 14:45:55)
+I (4379) AFE: AFE Version: (1MIC_V251128)
+I (4379) AFE: Input PCM Config: total 2 channels(1 microphone, 1 playback), sample rate:16000
+I (4389) AFE: AFE Pipeline: [input] -> |NS(WebRTC)| -> |WakeNet(wn9_hijoy_tts,)| -> |AGC(WakeNet)| -> [output]
+wakenet9l_tts1h8_Hi,Joy_3_0.631_0.633 set threshold for 1 word: 0.720000
+I (4409) wake: WWE set_wakenet_threshold wn=1 thr=0.7200 rc=1
+I (4409) wake: wake mode WWE (WakeNet/esp-sr), model=wn9_hijoy_tts
+I (4409) wake: WWE feed start: chunk=160 nch=2
+I (4409) wake: WWE fetch start
+I (4419) wake: wake mode MULTI (BUTTON+WWE), gpio=0
+I (4429) main: wake init ok
+I (4429) pull_stream: init ok
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0x15 (USB_UART_CHIP_RESET),boot:0x2b (SPI_FAST_FLASH_BOOT)
+Saved PC:0x4038182e
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce2810,len:0x1564
+load:0x403c8700,len:0x4
+load:0x403c8704,len:0xd24
+load:0x403cb700,len:0x2ed4
+entry 0x403c8928
+I (26) boot: ESP-IDF v5.4.2 2nd stage bootloader
+I (27) boot: compile time Mar  1 2026 17:21:49
+I (27) boot: Multicore bootloader
+I (27) boot: chip revision: v0.2
+I (30) boot: efuse block revision: v1.3
+I (33) boot.esp32s3: Boot SPI Speed : 80MHz
+I (37) boot.esp32s3: SPI Mode       : DIO
+I (41) boot.esp32s3: SPI Flash Size : 8MB
+I (45) boot: Enabling RNG early entropy source...
+I (49) boot: Partition Table:
+I (52) boot: ## Label            Usage          Type ST Offset   Length
+I (58) boot:  0 nvs              WiFi data        01 02 00009000 00006000
+I (65) boot:  1 phy_init         RF data          01 01 0000f000 00001000
+I (71) boot:  2 factory          factory app      00 00 00010000 00400000
+I (78) boot:  3 model            Unknown data     01 06 00410000 00200000
+I (84) boot: End of partition table
+I (87) esp_image: segment 0: paddr=00010020 vaddr=3c0c0020 size=237dch (145372) map
+I (121) esp_image: segment 1: paddr=00033804 vaddr=3fc9f000 size=06a00h ( 27136) load
+I (126) esp_image: segment 2: paddr=0003a20c vaddr=40374000 size=05e0ch ( 24076) load
+I (132) esp_image: segment 3: paddr=00040020 vaddr=42000020 size=baa6ch (764524) map
+I (267) esp_image: segment 4: paddr=000faa94 vaddr=40379e0c size=15148h ( 86344) load
+I (286) esp_image: segment 5: paddr=0010fbe4 vaddr=600fe000 size=0001ch (    28) load
+I (297) boot: Loaded app from partition at offset 0x10000
+I (298) boot: Disabling RNG early entropy source...
+I (308) octal_psram: vendor id    : 0x0d (AP)
+I (308) octal_psram: dev id       : 0x02 (generation 3)
+I (308) octal_psram: density      : 0x03 (64 Mbit)
+I (310) octal_psram: good-die     : 0x01 (Pass)
+I (314) octal_psram: Latency      : 0x01 (Fixed)
+I (319) octal_psram: VCC          : 0x01 (3V)
+I (323) octal_psram: SRF          : 0x01 (Fast Refresh)
+I (328) octal_psram: BurstType    : 0x01 (Hybrid Wrap)
+I (332) octal_psram: BurstLen     : 0x01 (32 Byte)
+I (337) octal_psram: Readlatency  : 0x02 (10 cycles@Fixed)
+I (342) octal_psram: DriveStrength: 0x00 (1/1)
+I (347) MSPI Timing: PSRAM timing tuning index: 5
+I (351) esp_psram: Found 8MB PSRAM device
+I (354) esp_psram: Speed: 80MHz
+I (357) cpu_start: Multicore app

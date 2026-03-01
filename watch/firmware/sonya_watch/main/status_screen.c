@@ -39,13 +39,13 @@ static const char *TAG = "status_screen";
 #define LCD_Y_GAP         0
 
 static esp_lcd_panel_handle_t s_panel = NULL;
-static esp_lcd_panel_io_handle_t s_io = NULL;
+static esp_lcd_panel_io_handle_t __attribute__((unused)) s_io = NULL;
 
 static volatile bool s_recording = false;
 static volatile bool s_error = false;
 
 // Custom init sequence known to work on Waveshare AMOLED boards with SH8601 controller.
-static const sh8601_lcd_init_cmd_t lcd_init_cmds[] = {
+static const sh8601_lcd_init_cmd_t __attribute__((unused)) lcd_init_cmds[] = {
     {0x11, (uint8_t[]){0x00}, 0, 120},                 // Sleep out
     {0xC4, (uint8_t[]){0x80}, 1, 0},
     {0x44, (uint8_t[]){0x01, 0xD1}, 2, 0},
@@ -255,7 +255,7 @@ static esp_err_t draw_solid(uint16_t color565)
     return ESP_OK;
 }
 
-static void task_screen(void *arg)
+static void __attribute__((unused)) task_screen(void *arg)
 {
     (void)arg;
 
@@ -302,8 +302,8 @@ static void task_screen(void *arg)
 
         if (changed) {
             esp_err_t e = msg_active
-                ? render_message_screen(s_msg, rgb565(0, 0, 0), rgb565(255, 255, 255))
-                : render_log_screen(rgb565(0, 0, 0), rgb565(255, 255, 255));
+                ? render_message_screen(s_msg, rgb565(255, 255, 255), rgb565(0, 0, 0))
+                : render_log_screen(rgb565(255, 255, 255), rgb565(0, 0, 0));
             if (e != ESP_OK) ESP_LOGW(TAG, "render failed: %s", esp_err_to_name(e));
         }
 
@@ -359,11 +359,21 @@ void status_screen_init(void)
     ESP_ERROR_CHECK(spi_bus_initialize(LCD_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO));
 
     ESP_LOGI(TAG, "install panel IO");
-    const esp_lcd_panel_io_spi_config_t io_config = SH8601_PANEL_IO_QSPI_CONFIG(LCD_PIN_CS, NULL, NULL);
+    esp_lcd_panel_io_spi_config_t io_config = SH8601_PANEL_IO_QSPI_CONFIG(LCD_PIN_CS, NULL, NULL);
+    ESP_LOGI(TAG, "panel io: pclk=%d spi_mode=%d cmd_bits=%d param_bits=%d",
+             (int)io_config.pclk_hz, (int)io_config.spi_mode, (int)io_config.lcd_cmd_bits, (int)io_config.lcd_param_bits);
     // esp_lcd_new_panel_io_spi expects an esp_lcd_spi_bus_handle_t (opaque handle), but for
     // SPI panels in IDF 5.1 this is the SPI host ID cast to a pointer-sized handle.
     // Use uintptr_t to avoid truncation/invalid pointer values.
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)(uintptr_t)LCD_SPI_HOST, &io_config, &s_io));
+    {
+        uint8_t id[3] = {0};
+        esp_err_t e = esp_lcd_panel_io_rx_param(s_io, 0x04, id, sizeof(id));
+        ESP_LOGI(TAG, "lcd rx 0x04 id: %s %02X %02X %02X", esp_err_to_name(e), id[0], id[1], id[2]);
+        uint8_t st[4] = {0};
+        e = esp_lcd_panel_io_rx_param(s_io, 0x09, st, sizeof(st));
+        ESP_LOGI(TAG, "lcd rx 0x09 st: %s %02X %02X %02X %02X", esp_err_to_name(e), st[0], st[1], st[2], st[3]);
+    }
 
     ESP_LOGI(TAG, "install SH8601 panel");
     sh8601_vendor_config_t vendor_config = {
@@ -388,18 +398,27 @@ void status_screen_init(void)
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, false));
     ESP_ERROR_CHECK(draw_solid(rgb565(0, 0, 0)));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
+    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(s_io, 0x29, NULL, 0)); // Display ON
     const uint8_t br = 0xFF;
     ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(s_io, 0x51, &br, 1));
+    {
+        uint8_t pm = 0;
+        esp_err_t e = esp_lcd_panel_io_rx_param(s_io, 0x0A, &pm, 1);
+        ESP_LOGI(TAG, "lcd rx 0x0A power_mode: %s %02X", esp_err_to_name(e), pm);
+        uint8_t dm = 0;
+        e = esp_lcd_panel_io_rx_param(s_io, 0x0D, &dm, 1);
+        ESP_LOGI(TAG, "lcd rx 0x0D display_mode: %s %02X", esp_err_to_name(e), dm);
+    }
 
     // Hardware blink test: 6 frames alternating red/blue to confirm panel responds.
     // Remove once display is confirmed working.
     ESP_LOGI(TAG, "hw blink test start");
     for (int i = 0; i < 6; i++) {
         uint16_t color = (i % 2 == 0) ? rgb565(255, 0, 0) : rgb565(0, 0, 255);
-        draw_solid(color);
+        ESP_ERROR_CHECK(draw_solid(color));
         vTaskDelay(pdMS_TO_TICKS(400));
     }
-    draw_solid(rgb565(0, 0, 0));
+    ESP_ERROR_CHECK(draw_solid(rgb565(0, 0, 0)));
     ESP_LOGI(TAG, "hw blink test done");
 
     xTaskCreate(task_screen, "status_screen", 4096, NULL, 5, NULL);

@@ -169,14 +169,14 @@ class VoiceRecognitionService : Service() {
         try {
             tts = TextToSpeech(this) { status ->
                 ttsReady = (status == TextToSpeech.SUCCESS)
-                if (ttsReady) {
-                    try {
-                        tts?.language = Locale("ru", "RU")
-                    } catch (_: Throwable) {
-                        // ignore
-                    }
-                    flushPendingTts()
+                Log.i("TTS", "init status=$status ready=$ttsReady")
+                if (!ttsReady) return@TextToSpeech
+                try {
+                    tts?.language = Locale("ru", "RU")
+                } catch (t: Throwable) {
+                    Log.w("TTS", "setLanguage failed: ${t.javaClass.simpleName}: ${t.message}")
                 }
+                flushPendingTts()
             }
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {}
@@ -1096,7 +1096,7 @@ class VoiceRecognitionService : Service() {
 
         // UX: immediate "heard you" confirm.
         vibrateVoiceAck()
-        speakOnMain("Услышала", queueMode = TextToSpeech.QUEUE_ADD)
+        speakOnMain("Услышала", queueMode = TextToSpeech.QUEUE_FLUSH)
         broadcastRecognitionResult(t)
 
         // Backend + "Всё ОК" confirm + sync happen inside sendRequest()/PendingActionsSync.
@@ -1110,6 +1110,7 @@ class VoiceRecognitionService : Service() {
             }
             pendingTtsQueue.addLast(text to queueMode)
         }
+        Log.i("TTS", "queued '${text.take(60)}' mode=$queueMode")
     }
 
     private fun flushPendingTts() {
@@ -1119,6 +1120,7 @@ class VoiceRecognitionService : Service() {
             out
         }
         if (items.isEmpty()) return
+        Log.i("TTS", "flushPendingTts count=${items.size}")
         for ((text, mode) in items) {
             speakOnMain(text, queueMode = mode)
         }
@@ -1126,6 +1128,7 @@ class VoiceRecognitionService : Service() {
 
     private fun speakOnMain(text: String, queueMode: Int = TextToSpeech.QUEUE_FLUSH) {
         if (!ttsReady || tts == null) {
+            Log.i("TTS", "not ready -> queue '${text.take(60)}'")
             enqueuePendingTts(text, queueMode)
             return
         }
@@ -1136,9 +1139,10 @@ class VoiceRecognitionService : Service() {
                     t.stop()
                 }
                 val utterId = "sonya_voice_ack_" + SystemClock.elapsedRealtime().toString()
+                Log.i("TTS", "speak id=$utterId mode=$queueMode text='${text.take(80)}'")
                 t.speak(text, queueMode, null, utterId)
-            } catch (_: Throwable) {
-                // ignore
+            } catch (e: Throwable) {
+                Log.w("TTS", "speak failed: ${e.javaClass.simpleName}: ${e.message}")
             }
         }
     }
