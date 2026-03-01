@@ -5,7 +5,9 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.Instant
+import java.time.LocalDate
 import java.time.OffsetDateTime
+import java.time.ZoneId
 import java.time.ZonedDateTime
 
 object PendingActionsSync {
@@ -18,19 +20,38 @@ object PendingActionsSync {
     private fun parseEpochMs(raw: String?): Long? {
         val s = raw?.trim().orEmpty()
         if (s.isBlank()) return null
-        try {
-            return OffsetDateTime.parse(s).toInstant().toEpochMilli()
-        } catch (_: Throwable) {
-        }
-        try {
-            return ZonedDateTime.parse(s).toInstant().toEpochMilli()
-        } catch (_: Throwable) {
-        }
-        try {
-            return Instant.parse(s).toEpochMilli()
-        } catch (_: Throwable) {
+        val candidates = linkedSetOf(s, s.replace(' ', 'T'))
+        for (c in candidates) {
+            try {
+                return OffsetDateTime.parse(c).toInstant().toEpochMilli()
+            } catch (_: Throwable) {
+            }
+            try {
+                return ZonedDateTime.parse(c).toInstant().toEpochMilli()
+            } catch (_: Throwable) {
+            }
+            try {
+                return Instant.parse(c).toEpochMilli()
+            } catch (_: Throwable) {
+            }
+            try {
+                return java.time.LocalDateTime.parse(c).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            } catch (_: Throwable) {
+            }
         }
         return null
+    }
+
+    private fun dayTypeByEpochMs(epochMs: Long): String {
+        val today = LocalDate.now()
+        val dueDay = Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()).toLocalDate()
+        return when {
+            dueDay.isEqual(today.minusDays(1)) -> "yesterday"
+            dueDay.isEqual(today) -> "today"
+            dueDay.isEqual(today.plusDays(1)) -> "tomorrow"
+            dueDay.isAfter(today.plusDays(1)) -> "future"
+            else -> "today"
+        }
     }
 
     private fun ackScheduled(deviceId: String, actionId: Int, source: String, status: String = "scheduled"): AckRequest {
@@ -115,6 +136,8 @@ object PendingActionsSync {
                     if (PendingActionStore.isHandled(context, a.id)) continue
 
                     val desc = (a.text?.trim()).takeUnless { it.isNullOrBlank() } ?: "Задание #${a.id}"
+                    val dueEpochMs = if (aType == "approx-alarm") parseEpochMs(a.time) else null
+                    val dayType = if (aType == "approx-alarm" && dueEpochMs != null) dayTypeByEpochMs(dueEpochMs) else null
 
                     // Create in backend /tasks so it appears on Tasks/Day page.
                     val score = interestRatio(a.interest) ?: 0.0
@@ -128,6 +151,7 @@ object PendingActionsSync {
                                     text = desc,
                                     urgent = urgent,
                                     important = important,
+                                    type = dayType,
                                     dueDate = if (aType == "approx-alarm") a.time else null,
                                 )
                             )

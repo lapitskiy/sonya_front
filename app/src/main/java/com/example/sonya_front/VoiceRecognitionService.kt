@@ -44,6 +44,8 @@ import com.google.android.gms.tasks.CancellationTokenSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import retrofit2.HttpException
 import java.io.IOException
 import java.text.SimpleDateFormat
@@ -52,6 +54,7 @@ import java.util.Locale
 import java.util.TimeZone
 
 class VoiceRecognitionService : Service() {
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var wakeWordEngine: VoskWakeWordEngine? = null
     private var speechRecognizer: SpeechRecognizer? = null
@@ -142,7 +145,20 @@ class VoiceRecognitionService : Service() {
         // Действия для паузы/возобновления фоновой прослушки вейк-фразы
         val ACTION_PAUSE_WAKE = "com.example.sonya_front.PAUSE_WAKE_LISTENING"
         val ACTION_RESUME_WAKE = "com.example.sonya_front.RESUME_WAKE_LISTENING"
+
+        // Озвучить произвольный текст через TTS сервиса (из других компонентов)
+        val ACTION_SPEAK = "com.example.sonya_front.SPEAK_TEXT"
+        val EXTRA_SPEAK_TEXT = "speak_text"
+
+        // Единый вход для распознанного текста (из любых источников: телефон/часы/кнопка)
+        val ACTION_PROCESS_RECOGNIZED_TEXT = "com.example.sonya_front.PROCESS_RECOGNIZED_TEXT"
+        val EXTRA_RECOGNIZED_TEXT = "recognized_text"
+        val EXTRA_RECOGNIZED_SOURCE = "recognized_source"
     }
+
+    // If TTS init is not ready yet, queue a few phrases (avoid "lost" confirms).
+    private val pendingTtsQueue: ArrayDeque<Pair<String, Int>> = ArrayDeque()
+    private val pendingTtsMax: Int = 6
 
     override fun onCreate() {
         super.onCreate()
@@ -159,6 +175,7 @@ class VoiceRecognitionService : Service() {
                     } catch (_: Throwable) {
                         // ignore
                     }
+                    flushPendingTts()
                 }
             }
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -208,7 +225,7 @@ class VoiceRecognitionService : Service() {
 
         // Initial pull to schedule any pending actions (e.g., after app restart).
         val deviceId = "android-" + Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
-        CoroutineScope(Dispatchers.IO).launch {
+        serviceScope.launch {
             PendingActionsSync.syncNow(applicationContext, deviceId, reason = "service_start")
         }
     }
@@ -611,7 +628,7 @@ class VoiceRecognitionService : Service() {
                     if (!hasInternet) return
 
                     val deviceId = "android-" + Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
-                    CoroutineScope(Dispatchers.IO).launch {
+                    serviceScope.launch {
                         PendingActionsSync.syncNow(applicationContext, deviceId, reason = "network_available")
                     }
                 }
@@ -707,7 +724,7 @@ class VoiceRecognitionService : Service() {
             deviceTime = deviceTime
         )
 
-        CoroutineScope(Dispatchers.IO).launch {
+        serviceScope.launch {
             try {
                 val resp = ApiClient.instance.sendCommand(request)
                 Log.d("API_CALL", "Command sent successfully: $request")
@@ -772,7 +789,7 @@ class VoiceRecognitionService : Service() {
                 broadcastHint("Ошибка: сервер прислал задачу без id (type=$type). Задача отменена.")
                 // Report to backend as cancellation with reason (actionId=0 is an error-report convention).
                 if (deviceId.isNotBlank()) {
-                    CoroutineScope(Dispatchers.IO).launch {
+                    serviceScope.launch {
                         try {
                             ApiClient.instance.ack(
                                 AckRequest(
@@ -806,7 +823,7 @@ class VoiceRecognitionService : Service() {
             // ACK each action scheduled via direct command response.
             // Without this, backend status stays "pending" forever since syncNow won't see it in /pending-actions.
             if (scheduledIds.isNotEmpty() && deviceId.isNotBlank()) {
-                CoroutineScope(Dispatchers.IO).launch {
+                serviceScope.launch {
                     for (id in scheduledIds) {
                         try {
                             ApiClient.instance.ack(
@@ -850,11 +867,22 @@ class VoiceRecognitionService : Service() {
                     startWakeWord()
                 }
             }
+            ACTION_SPEAK -> {
+                val text = intent.getStringExtra(EXTRA_SPEAK_TEXT) ?: return START_STICKY
+                Log.i("SVC_SPEAK", "speak requested: $text")
+                speakOnMain(text, TextToSpeech.QUEUE_ADD)
+            }
+            ACTION_PROCESS_RECOGNIZED_TEXT -> {
+                val text = intent.getStringExtra(EXTRA_RECOGNIZED_TEXT) ?: return START_STICKY
+                val source = intent.getStringExtra(EXTRA_RECOGNIZED_SOURCE) ?: "unknown"
+                processRecognizedText(text = text, source = source)
+            }
         }
         return START_STICKY
     }
 
     override fun onDestroy() {
+        serviceScope.cancel()
         cancelFinalize()
         mainHandler.removeCallbacks(wakeWordWatchdog)
         releaseWakeLock()
@@ -1040,11 +1068,8 @@ class VoiceRecognitionService : Service() {
         val finalText = combinedTextBuilder.toString().trim()
         if (finalText.isNotBlank()) {
             Log.d("SPEECH_RECOGNIZER", "Final stitched result: '$finalText'")
-            // Voice feedback: we finished recording the user's message.
-            vibrateVoiceAck()
-            speakOnMain("Услышала", queueMode = TextToSpeech.QUEUE_ADD)
-            broadcastRecognitionResult(finalText)
-            sendToServer(finalText)
+            // Unified path for any recognized text.
+            processRecognizedText(text = finalText, source = "phone_speechrecognizer")
         } else if (finishPhrase != null) {
             Log.w(
                 "SPEECH_RECOGNIZER",
@@ -1064,8 +1089,46 @@ class VoiceRecognitionService : Service() {
         startWakeWordDelayed(1200L)
     }
 
+    private fun processRecognizedText(text: String, source: String) {
+        val t = text.trim()
+        if (t.isBlank()) return
+        Log.i("ORCH", "processRecognizedText source=$source text='${t.take(180)}'")
+
+        // UX: immediate "heard you" confirm.
+        vibrateVoiceAck()
+        speakOnMain("Услышала", queueMode = TextToSpeech.QUEUE_ADD)
+        broadcastRecognitionResult(t)
+
+        // Backend + "Всё ОК" confirm + sync happen inside sendRequest()/PendingActionsSync.
+        sendToServer(t)
+    }
+
+    private fun enqueuePendingTts(text: String, queueMode: Int) {
+        synchronized(pendingTtsQueue) {
+            if (pendingTtsQueue.size >= pendingTtsMax) {
+                pendingTtsQueue.removeFirst()
+            }
+            pendingTtsQueue.addLast(text to queueMode)
+        }
+    }
+
+    private fun flushPendingTts() {
+        val items: List<Pair<String, Int>> = synchronized(pendingTtsQueue) {
+            val out = pendingTtsQueue.toList()
+            pendingTtsQueue.clear()
+            out
+        }
+        if (items.isEmpty()) return
+        for ((text, mode) in items) {
+            speakOnMain(text, queueMode = mode)
+        }
+    }
+
     private fun speakOnMain(text: String, queueMode: Int = TextToSpeech.QUEUE_FLUSH) {
-        if (!ttsReady) return
+        if (!ttsReady || tts == null) {
+            enqueuePendingTts(text, queueMode)
+            return
+        }
         val t = tts ?: return
         mainHandler.post {
             try {

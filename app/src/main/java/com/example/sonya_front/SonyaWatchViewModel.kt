@@ -2,14 +2,15 @@ package com.example.sonya_front
 
 import android.app.Application
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.provider.Settings
 import android.util.Log
+import androidx.core.content.ContextCompat
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
@@ -70,7 +71,6 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     private var pullLastReportAtMs: Long = 0L
     private var pullBytesAtLastReport: Int = 0
     private var liveRecId: Int = -1
-
     @Volatile private var appVisible: Boolean = false
 
     private lateinit var ble: SonyaWatchBleClient
@@ -506,7 +506,16 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                     appendLog("watch transcript: '$text'")
                     _ui.value = _ui.value.copy(lastTranscript = text)
                     try {
-                        sendCommandToBackend(text)
+                        // Use the unified orchestrator in VoiceRecognitionService so watch and phone share
+                        // the same "Услышала" + "Всё ОК" flow.
+                        val ctx = getApplication<Application>().applicationContext
+                        val intent = Intent(ctx, VoiceRecognitionService::class.java).apply {
+                            action = VoiceRecognitionService.ACTION_PROCESS_RECOGNIZED_TEXT
+                            putExtra(VoiceRecognitionService.EXTRA_RECOGNIZED_TEXT, text)
+                            putExtra(VoiceRecognitionService.EXTRA_RECOGNIZED_SOURCE, "watch_vosk")
+                        }
+                        ContextCompat.startForegroundService(ctx, intent)
+                        _ui.value = _ui.value.copy(lastBackendCommand = "SENT (via service)")
                     } catch (t: Throwable) {
                         appendLog("backend command failed: ${t.javaClass.simpleName}: ${t.message}")
                         _ui.value = _ui.value.copy(lastBackendCommand = "ERR: ${t.javaClass.simpleName}")
@@ -550,56 +559,9 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
 
     @SuppressLint("HardwareIds")
     private suspend fun sendCommandToBackend(text: String) {
-        val deviceId = "android-" + Settings.Secure.getString(
-            getApplication<Application>().contentResolver,
-            Settings.Secure.ANDROID_ID
-        )
-
-        val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault()).apply {
-            timeZone = TimeZone.getDefault()
-        }
-        val deviceTime = sdf.format(Date())
-
-        val req = CommandRequest(
-            deviceId = deviceId,
-            text = text,
-            lat = null,
-            lon = null,
-            deviceTime = deviceTime,
-        )
-
-        appendLog("backend /command: send text='${text.take(120)}'")
-        val resp = ApiClient.instance.sendCommand(req)
-        val code = resp.code()
-        _ui.value = _ui.value.copy(lastBackendCommand = "HTTP $code")
-        appendLog("backend /command: http=$code")
-        Log.i("WATCH_SYNC", "watch /command finished http=$code successful=${resp.isSuccessful} deviceId=$deviceId")
-        // Watch path bypasses VoiceRecognitionService, so we must pull pending actions
-        // right away; otherwise timers stay "pending" until next app/service restart.
-        if (resp.isSuccessful) {
-            appendLog("watch sync: start reason=watch_after_command")
-            Log.i("WATCH_SYNC", "syncNow start reason=watch_after_command deviceId=$deviceId")
-            try {
-                PendingActionsSync.syncNow(
-                    context = getApplication<Application>().applicationContext,
-                    deviceId = deviceId,
-                    reason = "watch_after_command",
-                )
-                appendLog("watch sync: done reason=watch_after_command")
-                Log.i("WATCH_SYNC", "syncNow done reason=watch_after_command deviceId=$deviceId")
-            } catch (t: Throwable) {
-                appendLog("watch sync failed: ${t.javaClass.simpleName}: ${t.message}")
-                Log.e(
-                    "WATCH_SYNC",
-                    "syncNow failed reason=watch_after_command deviceId=$deviceId err=${t.javaClass.simpleName}: ${t.message}",
-                    t
-                )
-                throw t
-            }
-        } else {
-            appendLog("watch sync skipped: /command http=$code")
-            Log.w("WATCH_SYNC", "syncNow skipped because /command not successful http=$code deviceId=$deviceId")
-        }
+        // Deprecated: watch flow is now handled by VoiceRecognitionService orchestrator.
+        // Kept only to avoid breaking older call sites if any remain.
+        throw IllegalStateException("sendCommandToBackend() is no longer used; use VoiceRecognitionService.ACTION_PROCESS_RECOGNIZED_TEXT")
     }
 
     private fun setEvent(s: String) {

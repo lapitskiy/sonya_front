@@ -23,6 +23,8 @@ import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import java.time.Instant
 import java.util.Locale
 
@@ -31,6 +33,7 @@ import java.util.Locale
  * Must be a ForegroundService if we play sound / TTS in background.
  */
 class PendingActionForegroundService : Service() {
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var tts: TextToSpeech? = null
     private var player: MediaPlayer? = null
@@ -74,7 +77,7 @@ class PendingActionForegroundService : Service() {
 
             // Send ack for manual "done" if we have deviceId
             if (deviceId.isNotBlank() && id > 0) {
-                CoroutineScope(Dispatchers.IO).launch {
+                serviceScope.launch {
                     try {
                         ApiClient.instance.ack(
                             AckRequest(
@@ -113,7 +116,7 @@ class PendingActionForegroundService : Service() {
             )
 
             if (deviceId.isNotBlank() && id > 0) {
-                CoroutineScope(Dispatchers.IO).launch {
+                serviceScope.launch {
                     try {
                         ApiClient.instance.ack(
                             AckRequest(
@@ -153,7 +156,7 @@ class PendingActionForegroundService : Service() {
             )
 
             if (deviceId.isNotBlank() && id > 0) {
-                CoroutineScope(Dispatchers.IO).launch {
+                serviceScope.launch {
                     try {
                         ApiClient.instance.ack(
                             AckRequest(
@@ -191,7 +194,7 @@ class PendingActionForegroundService : Service() {
             )
 
             if (deviceId.isNotBlank() && id > 0) {
-                CoroutineScope(Dispatchers.IO).launch {
+                serviceScope.launch {
                     try {
                         ApiClient.instance.ack(
                             AckRequest(
@@ -229,7 +232,7 @@ class PendingActionForegroundService : Service() {
             )
 
             if (deviceId.isNotBlank() && id > 0) {
-                CoroutineScope(Dispatchers.IO).launch {
+                serviceScope.launch {
                     try {
                         ApiClient.instance.ack(
                             AckRequest(
@@ -267,7 +270,7 @@ class PendingActionForegroundService : Service() {
             )
 
             if (deviceId.isNotBlank() && id > 0) {
-                CoroutineScope(Dispatchers.IO).launch {
+                serviceScope.launch {
                     try {
                         ApiClient.instance.ack(
                             AckRequest(
@@ -309,7 +312,7 @@ class PendingActionForegroundService : Service() {
 
         // Ack fired (best-effort).
         if (deviceId.isNotBlank() && id > 0) {
-            CoroutineScope(Dispatchers.IO).launch {
+            serviceScope.launch {
                 try {
                     ApiClient.instance.ack(
                         AckRequest(
@@ -346,6 +349,7 @@ class PendingActionForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        serviceScope.cancel()
         mainHandler.removeCallbacksAndMessages(null)
         stopPlayback()
         try {

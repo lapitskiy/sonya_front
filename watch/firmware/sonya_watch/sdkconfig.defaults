@@ -8,6 +8,9 @@ CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
 # Default wake mode: allow both button and wake phrase
 CONFIG_WAKE_MODE_MULTI=y
 
+# WakeNet sensitivity tuning (0.4000..0.9999 as x10000)
+CONFIG_WAKENET_THRESHOLD_X10000=7200
+
 # NimBLE (not Bluedroid)
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
@@ -33,8 +36,9 @@ CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT=48
 # Wake phrase: "Hi Joy"
 CONFIG_SR_WN_WN9_HIJOY_TTS=y
 
-# UI: LVGL (kept isolated, status_ui routes to it)
-CONFIG_UI_LVGL_ENABLE=y
+# UI: low-level status screen (display bring-up diagnostics)
+CONFIG_STATUS_SCREEN_ENABLE=y
+# CONFIG_UI_LVGL_ENABLE is not set
 
 # LVGL fonts: make UI readable + allow symbol icons to be visible
 CONFIG_LV_FONT_MONTSERRAT_20=y

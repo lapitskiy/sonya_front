@@ -38,15 +38,15 @@ object PendingActionsScheduler {
      */
     fun refreshCountdownNotifications(context: Context) {
         val ctx = context.applicationContext
+        val nm = ctx.getSystemService(NotificationManager::class.java)
+        nm?.cancel(TIMER_GROUP_SUMMARY_ID)
         val items = ActiveActionsStore.getAll(ctx)
         val nowEpochMs = System.currentTimeMillis()
-        var activeTimerCount = 0
         for (a in items) {
             // "ringing" means it already fired; showing/updating countdown makes no sense and can stick at 00:00.
             if (a.state.lowercase() == "ringing") continue
             val t = a.type.lowercase()
             if (t != "timer" && t != "text-timer") continue
-            activeTimerCount++
 
             // Safety: if we are overdue and the alarm didn't fire (OEM/Doze quirks), force-fire while UI is visible.
             val overdueMs = nowEpochMs - a.triggerAtEpochMs
@@ -67,8 +67,6 @@ object PendingActionsScheduler {
                 triggerAtEpochMs = a.triggerAtEpochMs,
             )
         }
-        // On some OEMs notifications auto-bundling is buggy; keep our own stable group summary.
-        updateTimerGroupSummary(ctx, activeTimerCount)
     }
 
     private fun forceFireOverdueTimerAction(context: Context, a: ActiveActionsStore.ActiveAction) {
@@ -509,54 +507,9 @@ object PendingActionsScheduler {
         try {
             val nm = context.getSystemService(NotificationManager::class.java) ?: return
             nm.cancel(notificationIdForTimer(actionId))
-            // Recompute group summary after cancellation.
-            val active = ActiveActionsStore.getAll(context.applicationContext)
-                .count { it.state.lowercase() != "ringing" && (it.type.equals("timer", true) || it.type.equals("text-timer", true)) }
-            updateTimerGroupSummary(context.applicationContext, active)
+            nm.cancel(TIMER_GROUP_SUMMARY_ID)
         } catch (_: Throwable) {
             // ignore
-        }
-    }
-
-    private fun updateTimerGroupSummary(context: Context, activeCount: Int) {
-        try {
-            ensureTimerChannel(context)
-            val nm = context.getSystemService(NotificationManager::class.java) ?: return
-            if (activeCount <= 0) {
-                nm.cancel(TIMER_GROUP_SUMMARY_ID)
-                return
-            }
-
-            val openIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-            val openPi = if (openIntent != null) {
-                PendingIntent.getActivity(
-                    context,
-                    0,
-                    openIntent,
-                    (PendingIntent.FLAG_UPDATE_CURRENT) or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
-                )
-            } else null
-
-            val title = "Таймеры"
-            val body = "Активно: $activeCount"
-
-            val b = NotificationCompat.Builder(context, TIMER_CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle(title)
-                .setContentText(body)
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .setPriority(NotificationCompat.PRIORITY_MIN)
-                .setGroup(TIMER_GROUP_KEY)
-                .setGroupSummary(true)
-                .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_SUMMARY)
-                .setShowWhen(false)
-
-            if (openPi != null) b.setContentIntent(openPi)
-
-            nm.notify(TIMER_GROUP_SUMMARY_ID, b.build())
-        } catch (t: Throwable) {
-            Log.w("SCHED", "Failed to update timer group summary: ${t.message}")
         }
     }
 
@@ -610,8 +563,6 @@ object PendingActionsScheduler {
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
-                .setGroup(TIMER_GROUP_KEY)
-                .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_SUMMARY)
                 .setShowWhen(false)
                 // Some OEMs don't show actions when icon=0, so use a real icon.
                 .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Отменить", cancelPi)
@@ -620,12 +571,7 @@ object PendingActionsScheduler {
             if (openPi != null) builder.setContentIntent(openPi)
 
             nm.notify(notificationIdForTimer(actionId), builder.build())
-            // Ensure group summary exists.
-            // (We update it in refresh loop too, but scheduleOne() may post before UI is visible.)
-            // Count is best-effort here.
-            val active = ActiveActionsStore.getAll(context.applicationContext)
-                .count { it.state.lowercase() != "ringing" && (it.type.equals("timer", true) || it.type.equals("text-timer", true)) }
-            updateTimerGroupSummary(context.applicationContext, active)
+            nm.cancel(TIMER_GROUP_SUMMARY_ID)
         } catch (t: Throwable) {
             Log.w("SCHED", "Failed to show timer notification action_id=$actionId: ${t.message}")
         }
@@ -737,6 +683,5 @@ object PendingActionsScheduler {
     private const val TIMER_CHANNEL_ID = "TIMER_CHANNEL"
     private const val TIMER_NOTIF_ID_BASE = 20_000
     private const val TIMER_GROUP_SUMMARY_ID = 20_000
-    private const val TIMER_GROUP_KEY = "com.example.sonya_front.TIMER_GROUP"
 }
 

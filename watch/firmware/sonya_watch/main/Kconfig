@@ -96,6 +96,16 @@ menu "Sonya Watch Configuration"
         help
             Audio energy threshold. Exceed to trigger wake.
 
+    config WAKENET_THRESHOLD_X10000
+        int "WakeNet threshold (x10000, lower = more sensitive)"
+        default 5200
+        range 4000 9999
+        depends on WAKE_MODE_WWE || WAKE_MODE_MULTI
+        help
+            WakeNet wake-word detection threshold.
+            Range is 0.4000..0.9999, encoded as integer *10000.
+            Example: 5200 => 0.52. Lower = higher recall, more false wakes.
+
     config DEVICE_NAME
         string "BLE device name"
         default "SONYA-WATCH"

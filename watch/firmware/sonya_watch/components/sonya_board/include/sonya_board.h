@@ -18,6 +18,12 @@ esp_err_t sonya_board_i2c_init(void);
  */
 i2c_master_bus_handle_t sonya_board_i2c_bus(void);
 
+/**
+ * Try to configure board PMU to avoid automatic power-off on low-load state.
+ * Current implementation targets AXP2101 at I2C address 0x34.
+ */
+esp_err_t sonya_board_pmu_init(void);
+
 #ifdef __cplusplus
 }
 #endif

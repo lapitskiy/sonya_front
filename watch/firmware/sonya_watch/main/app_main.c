@@ -22,6 +22,8 @@
 #include "driver/gpio.h"
 #include "status_ui.h"
 #include "sdkconfig.h"
+#include "sonya_board.h"
+#include "esp_system.h"
 
 static const char *TAG = "main";
 
@@ -29,6 +31,23 @@ static const char *TAG = "main";
 
 static int s_rec_seconds = CONFIG_REC_SECONDS;
 static volatile bool s_is_recording = false;
+
+static const char *reset_reason_str(esp_reset_reason_t r)
+{
+    switch (r) {
+    case ESP_RST_POWERON: return "POWERON";
+    case ESP_RST_SW: return "SW";
+    case ESP_RST_PANIC: return "PANIC";
+    case ESP_RST_INT_WDT: return "INT_WDT";
+    case ESP_RST_TASK_WDT: return "TASK_WDT";
+    case ESP_RST_WDT: return "WDT";
+    case ESP_RST_BROWNOUT: return "BROWNOUT";
+    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+    case ESP_RST_EXT: return "EXT";
+    case ESP_RST_USB: return "USB";
+    default: return "OTHER";
+    }
+}
 
 /* ---- button helpers ---- */
 
@@ -357,6 +376,8 @@ static void record_cmd(int cap_sec, int want)
 void app_main(void)
 {
     ESP_LOGI(TAG, "boot");
+    esp_reset_reason_t rr = esp_reset_reason();
+    ESP_LOGI(TAG, "reset reason: %s (%d)", reset_reason_str(rr), (int)rr);
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -365,6 +386,11 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(err);
     ESP_LOGI(TAG, "NVS ok");
+
+    err = sonya_board_pmu_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "pmu_init fail %d", (int)err);
+    }
 
     err = sonya_ble_init(CONFIG_DEVICE_NAME, on_ble_rx, NULL);
     if (err) {

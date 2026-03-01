@@ -1125,25 +1125,42 @@ private fun DayScreen(
 private fun parseDueLocalDate(raw: String?): LocalDate? {
     val s = raw?.trim().orEmpty()
     if (s.isBlank()) return null
+    val normalized = s.replace(' ', 'T')
+    val candidates = linkedSetOf(s, normalized)
     // 1) Plain date "YYYY-MM-DD"
-    try {
-        return LocalDate.parse(s)
-    } catch (_: Throwable) {
+    for (candidate in candidates) {
+        try {
+            return LocalDate.parse(candidate)
+        } catch (_: Throwable) {
+        }
     }
     // 2) ISO datetime with offset
-    try {
-        return OffsetDateTime.parse(s).atZoneSameInstant(ZoneId.systemDefault()).toLocalDate()
-    } catch (_: Throwable) {
+    for (candidate in candidates) {
+        try {
+            return OffsetDateTime.parse(candidate).atZoneSameInstant(ZoneId.systemDefault()).toLocalDate()
+        } catch (_: Throwable) {
+        }
     }
     // 3) ISO datetime with zone
-    try {
-        return ZonedDateTime.parse(s).withZoneSameInstant(ZoneId.systemDefault()).toLocalDate()
-    } catch (_: Throwable) {
+    for (candidate in candidates) {
+        try {
+            return ZonedDateTime.parse(candidate).withZoneSameInstant(ZoneId.systemDefault()).toLocalDate()
+        } catch (_: Throwable) {
+        }
     }
-    // 4) ISO instant
-    try {
-        return Instant.parse(s).atZone(ZoneId.systemDefault()).toLocalDate()
-    } catch (_: Throwable) {
+    // 4) ISO local datetime (without zone/offset)
+    for (candidate in candidates) {
+        try {
+            return java.time.LocalDateTime.parse(candidate).toLocalDate()
+        } catch (_: Throwable) {
+        }
+    }
+    // 5) ISO instant
+    for (candidate in candidates) {
+        try {
+            return Instant.parse(candidate).atZone(ZoneId.systemDefault()).toLocalDate()
+        } catch (_: Throwable) {
+        }
     }
     return null
 }
@@ -1151,25 +1168,35 @@ private fun parseDueLocalDate(raw: String?): LocalDate? {
 private fun parseDueLocalTime(raw: String?): java.time.LocalTime? {
     val s = raw?.trim().orEmpty()
     if (s.isBlank()) return null
+    val normalized = s.replace(' ', 'T')
+    val candidates = linkedSetOf(s, normalized)
     // 1) ISO datetime with offset
-    try {
-        return OffsetDateTime.parse(s).atZoneSameInstant(ZoneId.systemDefault()).toLocalTime()
-    } catch (_: Throwable) {
+    for (candidate in candidates) {
+        try {
+            return OffsetDateTime.parse(candidate).atZoneSameInstant(ZoneId.systemDefault()).toLocalTime()
+        } catch (_: Throwable) {
+        }
     }
     // 2) ISO datetime with zone
-    try {
-        return ZonedDateTime.parse(s).withZoneSameInstant(ZoneId.systemDefault()).toLocalTime()
-    } catch (_: Throwable) {
+    for (candidate in candidates) {
+        try {
+            return ZonedDateTime.parse(candidate).withZoneSameInstant(ZoneId.systemDefault()).toLocalTime()
+        } catch (_: Throwable) {
+        }
     }
     // 3) ISO local datetime (no zone/offset)
-    try {
-        return java.time.LocalDateTime.parse(s).toLocalTime()
-    } catch (_: Throwable) {
+    for (candidate in candidates) {
+        try {
+            return java.time.LocalDateTime.parse(candidate).toLocalTime()
+        } catch (_: Throwable) {
+        }
     }
     // 4) ISO instant
-    try {
-        return Instant.parse(s).atZone(ZoneId.systemDefault()).toLocalTime()
-    } catch (_: Throwable) {
+    for (candidate in candidates) {
+        try {
+            return Instant.parse(candidate).atZone(ZoneId.systemDefault()).toLocalTime()
+        } catch (_: Throwable) {
+        }
     }
     return null
 }

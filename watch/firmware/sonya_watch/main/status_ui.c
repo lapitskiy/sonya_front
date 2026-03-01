@@ -41,8 +41,11 @@ void status_ui_set_recording(bool recording)
 {
     static bool last = false;
     s_recording = recording;
-    if (CONFIG_UI_LVGL_ENABLE) ui_lvgl_set_recording(recording);
-    else status_screen_set_recording(recording);
+#if defined(CONFIG_UI_LVGL_ENABLE)
+    ui_lvgl_set_recording(recording);
+#else
+    status_screen_set_recording(recording);
+#endif
     if (recording != last) {
         ESP_LOGI(TAG, "recording=%d", recording ? 1 : 0);
         last = recording;
@@ -53,8 +56,11 @@ void status_ui_set_error(bool error)
 {
     static bool last = false;
     s_error = error;
-    if (CONFIG_UI_LVGL_ENABLE) ui_lvgl_set_error(error);
-    else status_screen_set_error(error);
+#if defined(CONFIG_UI_LVGL_ENABLE)
+    ui_lvgl_set_error(error);
+#else
+    status_screen_set_error(error);
+#endif
     if (error != last) {
         ESP_LOGI(TAG, "error=%d", error ? 1 : 0);
         last = error;
@@ -63,14 +69,20 @@ void status_ui_set_error(bool error)
 
 void status_ui_show_message(const char *msg, uint32_t ms)
 {
-    if (CONFIG_UI_LVGL_ENABLE) ui_lvgl_show_message(msg, ms);
-    else status_screen_show_message(msg, ms);
+#if defined(CONFIG_UI_LVGL_ENABLE)
+    ui_lvgl_show_message(msg, ms);
+#else
+    status_screen_show_message(msg, ms);
+#endif
 }
 
 void status_ui_show_ok(uint32_t ms)
 {
-    if (CONFIG_UI_LVGL_ENABLE) ui_lvgl_show_ok(ms);
-    else status_screen_show_message("OK", ms);
+#if defined(CONFIG_UI_LVGL_ENABLE)
+    ui_lvgl_show_ok(ms);
+#else
+    status_screen_show_message("OK", ms);
+#endif
 }
 
 static void task_led(void *arg)
@@ -144,7 +156,8 @@ void status_ui_init(void)
         xTaskCreate(task_led, "status_led", 2048, NULL, 5, NULL);
     }
 
-    if (CONFIG_UI_LVGL_ENABLE) {
+ #if defined(CONFIG_UI_LVGL_ENABLE)
+    {
         int rc = ui_lvgl_init();
         if (rc != 0) {
             ESP_LOGE(TAG, "ui_lvgl_init failed (%d)", rc);
@@ -155,8 +168,11 @@ void status_ui_init(void)
         } else {
             xTaskCreate(task_ui_conn, "ui_conn", 2048, NULL, 5, NULL);
         }
-    } else {
+    }
+#else
+    {
         status_screen_init();
     }
+#endif
 }
 

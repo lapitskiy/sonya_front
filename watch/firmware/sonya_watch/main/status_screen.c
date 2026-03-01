@@ -301,10 +301,9 @@ static void task_screen(void *arg)
         }
 
         if (changed) {
-            // Use a single (stable) palette; per-line coloring can be added later if needed.
             esp_err_t e = msg_active
-                ? render_message_screen(s_msg, rgb565(230, 230, 230), rgb565(0, 0, 0))
-                : render_log_screen(rgb565(230, 230, 230), rgb565(0, 0, 0));
+                ? render_message_screen(s_msg, rgb565(0, 0, 0), rgb565(255, 255, 255))
+                : render_log_screen(rgb565(0, 0, 0), rgb565(255, 255, 255));
             if (e != ESP_OK) ESP_LOGW(TAG, "render failed: %s", esp_err_to_name(e));
         }
 
@@ -386,16 +385,22 @@ void status_screen_init(void)
     ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_set_gap(s_panel, LCD_X_GAP, LCD_Y_GAP));
 
-    // Keep display "off" and brightness at 0 while we clear the frame buffer to black.
-    // This removes the visible white flash/garbage frame at boot on some SH8601 panels,
-    // especially when powered from a weaker source (battery).
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, false));
     ESP_ERROR_CHECK(draw_solid(rgb565(0, 0, 0)));
-
-    // Now make it visible.
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
     const uint8_t br = 0xFF;
     ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(s_io, 0x51, &br, 1));
+
+    // Hardware blink test: 6 frames alternating red/blue to confirm panel responds.
+    // Remove once display is confirmed working.
+    ESP_LOGI(TAG, "hw blink test start");
+    for (int i = 0; i < 6; i++) {
+        uint16_t color = (i % 2 == 0) ? rgb565(255, 0, 0) : rgb565(0, 0, 255);
+        draw_solid(color);
+        vTaskDelay(pdMS_TO_TICKS(400));
+    }
+    draw_solid(rgb565(0, 0, 0));
+    ESP_LOGI(TAG, "hw blink test done");
 
     xTaskCreate(task_screen, "status_screen", 4096, NULL, 5, NULL);
 #else

@@ -3,11 +3,13 @@
 #include "sdkconfig.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "driver/i2c_master.h"
 
 static const char *TAG = "sonya_board";
 
 static i2c_master_bus_handle_t s_i2c_bus = NULL;
 static bool s_i2c_inited = false;
+
 
 esp_err_t sonya_board_i2c_init(void)
 {

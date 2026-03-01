@@ -1,19 +1,48 @@
 capture_start port=/dev/ttyACM0 baud=115200 max_lines=200
-I (359) esp_image: segment 5: paddr=0016d6a8 vaddr=600fe000 sizeI (103505) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=12 avg=3) R(max=10 avg=2)
-I (103905) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (104465) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=17 avg=4) R(max=11 avg=2)
-I (105425) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=13 avg=3) R(max=10 avg=2)
-I (105905) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (106385) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=12 avg=3) R(max=10 avg=2)
-I (107125) wake: WWE hb: det=0 conf=100
-I (107345) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=11 avg=3) R(max=10 avg=2)
-I (107905) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (108305) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=13 avg=4) R(max=8 avg=2)
-I (109265) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=12 avg=3) R(max=8 avg=2)
-I (109905) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (110225) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=11 avg=3) R(max=10 avg=2)
-I (111185) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=13 avg=4) R(max=10 avg=2)
-I (111895) audio_cap_diag: eff_sr ~= 15993 Hz (frames=160256 dt=10019997us)
-I (111905) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (112145) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=12 avg=4) R(max=9 avg=2)
-I (112155) wake: WWE hb: det=0 conf=100
+I (38751) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=4I (377381) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=59 avg=16) R(max=60 avg=16)
+I (377891) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
+I (378341) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=76 avg=15) R(max=68 avg=15)
+I (379141) wake: WWE hb: det=0 conf=100
+I (379301) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=40 avg=10) R(max=40 avg=10)
+I (379931) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
+I (380261) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=147 avg=44) R(max=150 avg=44)
+I (381221) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=133 avg=28) R(max=137 avg=32)
+I (381971) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
+I (382181) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=244 avg=77) R(max=251 avg=78)
+I (382581) audio_cap_diag: eff_sr ~= 16017 Hz (frames=160256 dt=10005002us)
+I (383141) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=120 avg=27) R(max=120 avg=27)
+I (384011) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
+I (384101) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=243 avg=75) R(max=260 avg=75)
+I (384161) wake: WWE hb: det=0 conf=100
+I (385061) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=117 avg=28) R(max=125 avg=28)
+I (386021) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=204 avg=68) R(max=217 avg=70)
+I (386051) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
+I (386981) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=296 avg=96) R(max=321 avg=100)
+I (387941) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=33 avg=8) R(max=35 avg=7)
+I (388091) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
+I (388901) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=99 avg=25) R(max=97 avg=25)
+I (389161) wake: WWE hb: det=0 conf=100
+I (389861) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=215 avg=60) R(max=217 avg=60)
+I (390131) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
+I (390821) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=235 avg=60) R(max=241 avg=60)
+I (391781) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=128 avg=21) R(max=129 avg=21)
+I (392171) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
+I (392601) audio_cap_diag: eff_sr ~= 15993 Hz (frames=160256 dt=10020009us)
+I (392741) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=73 avg=22) R(max=69 avg=23)
+I (393701) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=84 avg=30) R(max=89 avg=31)
+I (394181) wake: WWE hb: det=0 conf=100
+I (394211) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
+I (394661) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=28 avg=8) R(max=27 avg=8)
+I (395621) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=350 avg=91) R(max=360 avg=93)
+I (396251) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
+I (396581) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=168 avg=56) R(max=163 avg=56)
+I (397541) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=293 avg=74) R(max=298 avg=75)
+I (398291) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
+I (398501) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=122 avg=48) R(max=129 avg=48)
+I (399211) wake: WWE hb: det=0 conf=100
+I (399461) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=187 avg=32) R(max=166 avg=35)
+I (400331) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15
+I (400421) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=265 avg=77) R(max=255 avg=77)
+I (401381) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=151 avg=38) R(max=165 avg=39)
+I (402341) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=186 avg=53) R(max=219 avg=51)
+I (402371) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=15

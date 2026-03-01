@@ -236,12 +236,13 @@ static int wwe_start(void)
     // Keep it minimal: wake-word only.
     s_afe_cfg->aec_init = false;
     s_afe_cfg->se_init = false;
-    s_afe_cfg->ns_init = false;
+    // Enable NS to improve wake recall in noise.
+    s_afe_cfg->ns_init = true;
     s_afe_cfg->vad_init = false;
     s_afe_cfg->wakenet_init = true;
 
-    // Make WakeNet more aggressive (higher recall, potentially more false alarms).
-    s_afe_cfg->wakenet_mode = DET_MODE_95;
+    // Normal mode: fewer false wakes than DET_MODE_95 (Aggressive).
+    s_afe_cfg->wakenet_mode = DET_MODE_90;
 
     // Enable AGC for ASR using WakeNet-driven gain (helps when speech level varies).
     s_afe_cfg->agc_init = true;
@@ -272,6 +273,16 @@ static int wwe_start(void)
     if (!s_afe_data) {
         ESP_LOGE(TAG, "WWE create_from_config failed");
         return -1;
+    }
+
+    // Tune WakeNet threshold: lower => more sensitive.
+    if (s_afe->set_wakenet_threshold) {
+        const float thr = (float)CONFIG_WAKENET_THRESHOLD_X10000 / 10000.0f;
+        // esp_afe_sr_iface: index is WakeNet instance (1 or 2), not word index
+        int rc = s_afe->set_wakenet_threshold(s_afe_data, 1, thr);
+        ESP_LOGI(TAG, "WWE set_wakenet_threshold wn=1 thr=%.4f rc=%d", (double)thr, rc);
+    } else {
+        ESP_LOGW(TAG, "WWE set_wakenet_threshold not supported by iface");
     }
 
     s_wwe_running = true;
