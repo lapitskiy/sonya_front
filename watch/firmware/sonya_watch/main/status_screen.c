@@ -52,11 +52,11 @@ static const sh8601_lcd_init_cmd_t lcd_init_cmds[] = {
     {0x35, (uint8_t[]){0x00}, 1, 0},                   // TE on (param)
     {0x53, (uint8_t[]){0x20}, 1, 10},
     {0x63, (uint8_t[]){0xFF}, 1, 10},
-    {0x51, (uint8_t[]){0x00}, 1, 10},                  // Brightness 0 (will be set to 0xFF later)
+    // Start with brightness 0. We'll only enable visibility after clearing the frame buffer,
+    // otherwise the panel can briefly show garbage/white during boot.
+    {0x51, (uint8_t[]){0x00}, 1, 10},
     {0x2A, (uint8_t[]){0x00, 0x16, 0x01, 0xAF}, 4, 0},  // Column address set (0x16..0x1AF) -> aligns 410px width with panel
     {0x2B, (uint8_t[]){0x00, 0x00, 0x01, 0xF5}, 4, 0},  // Row address set (0..0x1F5) -> 502px height
-    {0x29, (uint8_t[]){0x00}, 0, 10},                  // Display on
-    {0x51, (uint8_t[]){0xFF}, 1, 0},                   // Brightness max
 };
 
 static inline uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b)
@@ -385,10 +385,17 @@ void status_screen_init(void)
     ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_set_gap(s_panel, LCD_X_GAP, LCD_Y_GAP));
-    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
 
-    // Start with black; task will draw "BLE ADV" text.
-    draw_solid(rgb565(0, 0, 0));
+    // Keep display "off" and brightness at 0 while we clear the frame buffer to black.
+    // This removes the visible white flash/garbage frame at boot on some SH8601 panels,
+    // especially when powered from a weaker source (battery).
+    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, false));
+    ESP_ERROR_CHECK(draw_solid(rgb565(0, 0, 0)));
+
+    // Now make it visible.
+    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
+    const uint8_t br = 0xFF;
+    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(s_io, 0x51, &br, 1));
 
     xTaskCreate(task_screen, "status_screen", 4096, NULL, 5, NULL);
 #else

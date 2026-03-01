@@ -40,7 +40,7 @@ data class SonyaWatchUiState(
 class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     private val _ui = mutableStateOf(
         SonyaWatchUiState(
-            backendUrl = "http://192.168.0.21:18000/voice",
+            backendUrl = "http://192.168.0.50:18000/voice",
             lastEvent = "Ожидаю подключения к часам…",
         )
     )
@@ -573,6 +573,33 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
         val code = resp.code()
         _ui.value = _ui.value.copy(lastBackendCommand = "HTTP $code")
         appendLog("backend /command: http=$code")
+        Log.i("WATCH_SYNC", "watch /command finished http=$code successful=${resp.isSuccessful} deviceId=$deviceId")
+        // Watch path bypasses VoiceRecognitionService, so we must pull pending actions
+        // right away; otherwise timers stay "pending" until next app/service restart.
+        if (resp.isSuccessful) {
+            appendLog("watch sync: start reason=watch_after_command")
+            Log.i("WATCH_SYNC", "syncNow start reason=watch_after_command deviceId=$deviceId")
+            try {
+                PendingActionsSync.syncNow(
+                    context = getApplication<Application>().applicationContext,
+                    deviceId = deviceId,
+                    reason = "watch_after_command",
+                )
+                appendLog("watch sync: done reason=watch_after_command")
+                Log.i("WATCH_SYNC", "syncNow done reason=watch_after_command deviceId=$deviceId")
+            } catch (t: Throwable) {
+                appendLog("watch sync failed: ${t.javaClass.simpleName}: ${t.message}")
+                Log.e(
+                    "WATCH_SYNC",
+                    "syncNow failed reason=watch_after_command deviceId=$deviceId err=${t.javaClass.simpleName}: ${t.message}",
+                    t
+                )
+                throw t
+            }
+        } else {
+            appendLog("watch sync skipped: /command http=$code")
+            Log.w("WATCH_SYNC", "syncNow skipped because /command not successful http=$code deviceId=$deviceId")
+        }
     }
 
     private fun setEvent(s: String) {

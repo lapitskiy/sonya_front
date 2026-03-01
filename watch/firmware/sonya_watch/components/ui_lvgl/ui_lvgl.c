@@ -68,11 +68,10 @@ static const sh8601_lcd_init_cmd_t lcd_init_cmds[] = {
     {0x35, (uint8_t[]){0x00}, 1, 0},                   // TE on (param)
     {0x53, (uint8_t[]){0x20}, 1, 10},
     {0x63, (uint8_t[]){0xFF}, 1, 10},
-    {0x51, (uint8_t[]){0x00}, 1, 10},                  // Brightness 0 (will be set to 0xFF later)
+    // Start dark; turn on after LVGL draws the first frame to avoid a white flash/garbage frame.
+    {0x51, (uint8_t[]){0x00}, 1, 10},
     {0x2A, (uint8_t[]){0x00, 0x16, 0x01, 0xAF}, 4, 0},  // Column address set (0x16..0x1AF)
     {0x2B, (uint8_t[]){0x00, 0x00, 0x01, 0xF5}, 4, 0},  // Row address set (0..0x1F5)
-    {0x29, (uint8_t[]){0x00}, 0, 10},                  // Display on
-    {0x51, (uint8_t[]){0xFF}, 1, 0},                   // Brightness max
 };
 
 static lv_obj_t *s_label = NULL;
@@ -87,6 +86,21 @@ static volatile bool s_recording = false;
 static volatile bool s_error = false;
 
 static lv_timer_t *s_restore_timer = NULL;
+
+static void task_panel_visible(void *arg)
+{
+    (void)arg;
+    // Give LVGL a moment to render the first black frame before enabling visibility.
+    vTaskDelay(pdMS_TO_TICKS(200));
+    if (!s_io || !s_panel) {
+        vTaskDelete(NULL);
+        return;
+    }
+    esp_lcd_panel_disp_on_off(s_panel, true);
+    const uint8_t br = 0xFF;
+    esp_lcd_panel_io_tx_param(s_io, 0x51, &br, 1);
+    vTaskDelete(NULL);
+}
 
 static void ok_set_opa(void *obj, int32_t v)
 {
@@ -309,7 +323,8 @@ int ui_lvgl_init(void)
     ESP_LOGI(TAG, "panel_init");
     ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_set_gap(s_panel, LCD_X_GAP, LCD_Y_GAP));
-    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
+    // Keep display "dark" until LVGL draws its first frame.
+    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, false));
     diag_dump_heap("after panel init");
 
     // Avoid -Werror=missing-braces by assigning fields explicitly.
@@ -440,6 +455,9 @@ int ui_lvgl_init(void)
     ESP_LOGI(TAG, "[diag] assets: bt_off=%u bt_on=%u",
              (unsigned)s_img_bt_off.data_size, (unsigned)s_img_bt_on.data_size);
     lvgl_port_unlock();
+
+    // Enable display + brightness after first frame.
+    xTaskCreate(task_panel_visible, "ui_panel_on", 2048, NULL, 4, NULL);
 
     // UI event queue + async worker (low priority) to avoid impacting audio capture.
     if (!s_evt_q) {
