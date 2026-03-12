@@ -327,7 +327,8 @@ public:
 
     bool isVbusIn(void)
     {
-        return getRegisterBit(XPOWERS_AXP2101_STATUS2, 3) == 0 && isVbusGood();
+        // Bit meaning for STATUS2[3] is "VBUS present" (1 = present). The previous check was inverted.
+        return getRegisterBit(XPOWERS_AXP2101_STATUS2, 3) == 1 && isVbusGood();
     }
 
     xpowers_chg_status_t getChargerStatus(void)

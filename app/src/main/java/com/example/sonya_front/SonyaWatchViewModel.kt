@@ -36,6 +36,11 @@ data class SonyaWatchUiState(
     val lastTranscript: String = "",
     val lastBackendCommand: String = "",
     val lastUpload: String = "",
+    val batteryPercent: Int? = null,
+    val batteryMv: Int? = null,
+    val vbusMv: Int? = null,
+    val charging: Boolean? = null,
+    val vbusIn: Boolean? = null,
     val logTail: List<String> = emptyList(),
 )
 
@@ -73,6 +78,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     private var pullBytesAtLastReport: Int = 0
     private var liveRecId: Int = -1
     @Volatile private var appVisible: Boolean = false
+    private var batteryPollJob: Job? = null
 
     private lateinit var ble: SonyaWatchBleClient
 
@@ -93,9 +99,14 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                     viewModelScope.launch {
                         delay(600L)
                         sendPing()
+                        sendBatt()
                         delay(1200L)
-                        if (_ui.value.connected) sendPing()
+                        if (_ui.value.connected) {
+                            sendPing()
+                            sendBatt()
+                        }
                     }
+                    startBatteryPolling()
                 } else {
                     // Reset protocol state so UI doesn't look "stuck".
                     recording = false
@@ -106,6 +117,8 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                     liveRecId = -1
                     pullTimeoutJob?.cancel()
                     pullTimeoutJob = null
+                    batteryPollJob?.cancel()
+                    batteryPollJob = null
                     _ui.value = _ui.value.copy(downloadTotalBytes = 0, downloadOffsetBytes = 0, bytesTotal = 0)
                     setEvent("Ожидаю подключения к часам…")
                 }
@@ -153,6 +166,8 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     fun disconnect() {
         appendLog("disconnect()")
         ble.disconnect()
+        batteryPollJob?.cancel()
+        batteryPollJob = null
         _ui.value = _ui.value.copy(scanning = false, connected = false, autoConnect = false)
         recording = false
         downloading = false
@@ -172,6 +187,10 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
 
     fun sendRec() {
         ble.writeAsciiCommand("REC")
+    }
+
+    fun sendBatt() {
+        ble.writeAsciiCommand("BATT")
     }
 
     fun uploadLastWav() {
@@ -375,6 +394,11 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                     "<decode error>"
                 }
                 val m = msg.trim()
+                val isBatt = m.startsWith("BATT:")
+                if (isBatt) {
+                    handleBatteryInfo(m)
+                    return
+                }
                 val isInfo = m == "PONG" || m.startsWith("REC_SEC=")
                 if (isInfo) {
                     appendLog("watch: '$m'")
@@ -389,6 +413,56 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                 appendLog("frame $typeName seq=${f.seq} len=${f.payload.size}")
             }
         }
+    }
+
+    private fun startBatteryPolling() {
+        batteryPollJob?.cancel()
+        batteryPollJob = viewModelScope.launch(Dispatchers.Main) {
+            while (_ui.value.connected) {
+                delay(30_000L)
+                if (!_ui.value.connected) break
+                sendBatt()
+            }
+        }
+    }
+
+    private fun handleBatteryInfo(msg: String) {
+        if (msg.startsWith("BATT:err=")) {
+            appendLog("watch battery error: $msg")
+            setEvent("WATCH: $msg")
+            return
+        }
+        val body = msg.removePrefix("BATT:")
+        val pairs = body.split(",")
+            .mapNotNull { part ->
+                val idx = part.indexOf('=')
+                if (idx <= 0 || idx >= part.length - 1) null else {
+                    part.substring(0, idx).trim() to part.substring(idx + 1).trim()
+                }
+            }
+            .toMap()
+        val pct = pairs["pct"]?.toIntOrNull()
+        val bmv = pairs["bmv"]?.toIntOrNull()
+        val vbus = pairs["vbus"]?.toIntOrNull()
+        val chg = when (pairs["chg"]) {
+            "1" -> true
+            "0" -> false
+            else -> null
+        }
+        val vin = when (pairs["in"]) {
+            "1" -> true
+            "0" -> false
+            else -> null
+        }
+        _ui.value = _ui.value.copy(
+            batteryPercent = pct,
+            batteryMv = bmv,
+            vbusMv = vbus,
+            charging = chg,
+            vbusIn = vin
+        )
+        appendLog("watch battery: pct=$pct bmv=$bmv vbus=$vbus chg=$chg in=$vin")
+        setEvent("WATCH: battery ${pct ?: "?"}%")
     }
 
     private fun finalizeDone(m: RecMeta) {

@@ -56,6 +56,7 @@ proto_cmd_t proto_parse_rx_cmd(const uint8_t *buf, size_t len,
     cmd[n] = '\0';
 
     if (n >= 4 && memcmp(cmd, "PING", 4) == 0) return PROTO_CMD_PING;
+    if (n >= 4 && memcmp(cmd, "BATT", 4) == 0) return PROTO_CMD_BATT;
     /* Accept "REC" with optional trailing newline/whitespace from BLE apps */
     if (n >= 3 && memcmp(cmd, "REC", 3) == 0) return PROTO_CMD_REC;
 

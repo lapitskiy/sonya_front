@@ -64,6 +64,7 @@ object TasksIngestor {
                         text = desc,
                         urgent = urgent,
                         important = important,
+                        type = "task",
                     )
                 )
                 IngestedTasksStore.markIngested(appCtx, reqId)

@@ -58,3 +58,8 @@ CONFIG_LV_USE_LODEPNG=y
 
 # LVGL memory: use system malloc (PSRAM-capable) instead of tiny built-in pool
 CONFIG_LV_USE_CLIB_MALLOC=y
+
+# Console over USB Serial/JTAG (so monitor works on /dev/ttyACM0)
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_UART_DEFAULT=n
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y

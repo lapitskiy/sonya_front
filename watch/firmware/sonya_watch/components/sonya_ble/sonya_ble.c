@@ -6,6 +6,7 @@
 #include "sonya_ble.h"
 #include "protocol.h"
 #include "esp_log.h"
+#include "sonya_diaglog.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nimble/nimble_port.h"
@@ -104,12 +105,14 @@ static void on_connect(struct ble_gap_event *event, void *arg)
 {
     conn_handle = event->connect.conn_handle;
     ESP_LOGI(TAG, "BLE connected, conn_handle=%d", conn_handle);
+    sonya_diaglog_addf("ble", "connect h=%d", (int)conn_handle);
 }
 
 static void on_disconnect(struct ble_gap_event *event, void *arg)
 {
     conn_handle = BLE_HS_CONN_HANDLE_NONE;
     ESP_LOGI(TAG, "BLE disconnected, reason=%d", event->disconnect.reason);
+    sonya_diaglog_addf("ble", "disconnect reason=%d", (int)event->disconnect.reason);
     start_advertising();
 }
 
@@ -187,6 +190,7 @@ static void on_sync(void)
 static void on_reset(int reason)
 {
     ESP_LOGI(TAG, "BLE reset, reason=%d", reason);
+    sonya_diaglog_addf("ble", "reset reason=%d", reason);
 }
 
 static void host_task(void *arg)

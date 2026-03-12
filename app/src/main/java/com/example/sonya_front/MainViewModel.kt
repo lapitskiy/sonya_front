@@ -103,7 +103,7 @@ class MainViewModel : ViewModel() {
                         text = trimmed,
                         urgent = urgent,
                         important = important,
-                        type = type,
+                        type = type ?: "task",
                     )
                 )
             }

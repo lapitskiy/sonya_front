@@ -55,3 +55,12 @@ int audio_cap_read(uint8_t *buf, size_t max_len, uint32_t timeout_ms);
  * when RAM is limited.
  */
 int audio_cap_record_segment(uint8_t *buf, size_t buf_size, int rec_seconds);
+
+/**
+ * @brief Play short tone on speaker (ES8311)
+ * @param freq_hz Tone frequency in Hz
+ * @param duration_ms Tone duration in milliseconds
+ * @param volume_percent Output volume 0..100
+ * @return 0 on success, negative on error
+ */
+int audio_cap_play_tone(uint16_t freq_hz, uint16_t duration_ms, uint8_t volume_percent);

@@ -11,6 +11,7 @@ idf_component_register(
         freertos
         heap
         sonya_ble
+        sonya_diaglog
         audio_cap
         wake
         protocol

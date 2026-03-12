@@ -654,9 +654,22 @@ private fun TasksScreen(
     val items = when (tasksTab) {
         1 -> viewModel.tasksActive.value.filter { it.type?.trim()?.lowercase() == "geo" }
         2 -> viewModel.tasksDone.value
-        else -> viewModel.tasksActive.value.filter {
-            val ty = it.type?.trim()?.lowercase()
-            ty == null || ty == "task"
+        else -> viewModel.tasksActive.value.filter { it.type?.trim()?.lowercase() == "task" }
+    }
+
+    LaunchedEffect(tasksTab, viewModel.tasksActive.value, viewModel.tasksDone.value) {
+        val src = if (tasksTab == 2) viewModel.tasksDone.value else viewModel.tasksActive.value
+        for (t in src) {
+            val ty = t.type?.trim()?.lowercase()
+            val visible = when (tasksTab) {
+                1 -> ty == "geo"
+                2 -> true
+                else -> ty == "task"
+            }
+            Log.d(
+                "UI_TASKS_FILTER",
+                "tab=$tasksTab id=${t.id} type=$ty due=${t.dueDate} visible=$visible text='${t.text}'"
+            )
         }
     }
 

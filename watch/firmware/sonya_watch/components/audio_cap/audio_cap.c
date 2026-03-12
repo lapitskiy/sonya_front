@@ -16,11 +16,13 @@
 #include "audio_codec_data_if.h"
 #include "audio_codec_gpio_if.h"
 #include "es7210_adc.h"
+#include "es8311_codec.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/ringbuf.h"
 #include "sonya_board.h"
+#include "esp_err.h"
 #include <string.h>
 #include <inttypes.h>
 
@@ -33,6 +35,7 @@ static TaskHandle_t capture_task = NULL;
 static const audio_codec_data_if_t *s_i2s_data_if = NULL;
 static esp_codec_dev_handle_t s_mic = NULL;
 static i2s_chan_handle_t s_tx_handle = NULL; // unused, but kept for esp_codec_dev compatibility
+static esp_codec_dev_handle_t s_spk = NULL;
 
 #define RINGBUF_SIZE (16000 * 2 * 2)  /* ~2 sec at 16kHz 16bit mono */
 #define DMA_BUF_COUNT 4
@@ -98,6 +101,67 @@ static int init_mic_codec(int sr)
     }
     (void)esp_codec_dev_set_in_gain(s_mic, (float)CONFIG_AUDIO_IN_GAIN_DB);
     ESP_LOGI(TAG, "mic gain: %d dB", (int)CONFIG_AUDIO_IN_GAIN_DB);
+    return 0;
+}
+
+static int init_spk_codec(int sr)
+{
+    i2c_master_bus_handle_t bus = sonya_board_i2c_bus();
+    if (!bus) return -1;
+
+    audio_codec_i2c_cfg_t i2c_cfg = {
+        .port = I2C_NUM_0,
+        .addr = ES8311_CODEC_DEFAULT_ADDR,
+        .bus_handle = bus,
+    };
+    const audio_codec_ctrl_if_t *i2c_ctrl_if = audio_codec_new_i2c_ctrl(&i2c_cfg);
+    if (!i2c_ctrl_if) {
+        ESP_LOGE(TAG, "audio_codec_new_i2c_ctrl(spk) failed");
+        return -1;
+    }
+
+    es8311_codec_cfg_t es8311_cfg = {
+        .ctrl_if = i2c_ctrl_if,
+        .codec_mode = ESP_CODEC_DEV_WORK_MODE_DAC,
+        .pa_pin = -1,
+        .pa_reverted = false,
+        .master_mode = false,
+        .use_mclk = true,
+        .digital_mic = false,
+        .invert_mclk = false,
+        .invert_sclk = false,
+        .no_dac_ref = false,
+        .mclk_div = 256,
+    };
+    const audio_codec_if_t *es8311_dev = es8311_codec_new(&es8311_cfg);
+    if (!es8311_dev) {
+        ESP_LOGE(TAG, "es8311_codec_new failed");
+        return -1;
+    }
+
+    esp_codec_dev_cfg_t dev_cfg = {
+        .dev_type = ESP_CODEC_DEV_TYPE_OUT,
+        .codec_if = es8311_dev,
+        .data_if = s_i2s_data_if,
+    };
+    s_spk = esp_codec_dev_new(&dev_cfg);
+    if (!s_spk) {
+        ESP_LOGE(TAG, "esp_codec_dev_new(spk) failed");
+        return -1;
+    }
+
+    esp_codec_dev_sample_info_t fs = {
+        .sample_rate = (uint32_t)sr,
+        .channel = I2S_SLOT_MODE_STEREO,
+        .bits_per_sample = I2S_DATA_BIT_WIDTH_16BIT,
+    };
+    int err = esp_codec_dev_open(s_spk, &fs);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_codec_dev_open(spk) failed: %d", err);
+        return -1;
+    }
+    (void)esp_codec_dev_set_out_mute(s_spk, false);
+    (void)esp_codec_dev_set_out_vol(s_spk, 60);
     return 0;
 }
 
@@ -247,6 +311,12 @@ int audio_cap_init(void)
         i2s_del_channel(rx_handle);
         return -1;
     }
+    if (init_spk_codec(sr) != 0) {
+        ESP_LOGE(TAG, "init_spk_codec failed");
+        i2s_del_channel(s_tx_handle);
+        i2s_del_channel(rx_handle);
+        return -1;
+    }
 
     ringbuf = xRingbufferCreate(RINGBUF_SIZE, RINGBUF_TYPE_BYTEBUF);
     if (!ringbuf) {
@@ -353,4 +423,45 @@ int audio_cap_record_segment(uint8_t *buf, size_t buf_size, int rec_seconds)
     }
     ESP_LOGI(TAG, "recorded %u bytes (%d sec)", (unsigned)got, rec_sec);
     return (int)got;
+}
+
+int audio_cap_play_tone(uint16_t freq_hz, uint16_t duration_ms, uint8_t volume_percent)
+{
+    if (!s_spk || !s_tx_handle) return -1;
+    if (freq_hz < 100 || freq_hz > 5000) return -1;
+    if (duration_ms == 0) return -1;
+
+    if (volume_percent > 100) volume_percent = 100;
+    (void)esp_codec_dev_set_out_mute(s_spk, false);
+    (void)esp_codec_dev_set_out_vol(s_spk, (int)volume_percent);
+
+    esp_err_t err = i2s_channel_enable(s_tx_handle);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "i2s_channel_enable(tx) failed: %s (%d)", esp_err_to_name(err), (int)err);
+        return -1;
+    }
+
+    const uint32_t sr = (uint32_t)CONFIG_AUDIO_SR;
+    uint32_t total_samples = ((uint32_t)duration_ms * sr) / 1000U;
+    uint32_t period = sr / (uint32_t)freq_hz;
+    if (period == 0) period = 1;
+    // Keep it clearly audible but avoid hard clipping.
+    const int16_t amp = (int16_t)(3000 + (int32_t)volume_percent * 250);
+
+    int16_t pcm[256 * 2];
+    while (total_samples > 0) {
+        uint32_t batch = total_samples > 256U ? 256U : total_samples;
+        for (uint32_t i = 0; i < batch; i++) {
+            int16_t v = ((i % period) < (period / 2U)) ? amp : (int16_t)-amp;
+            pcm[i * 2U + 0U] = v;
+            pcm[i * 2U + 1U] = v;
+        }
+        int wr = esp_codec_dev_write(s_spk, pcm, (int)(batch * sizeof(int16_t) * 2U));
+        if (wr != ESP_OK) {
+            ESP_LOGE(TAG, "esp_codec_dev_write failed: %d", wr);
+            return -1;
+        }
+        total_samples -= batch;
+    }
+    return 0;
 }

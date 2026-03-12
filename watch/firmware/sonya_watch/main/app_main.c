@@ -17,6 +17,7 @@
 #include "rec_store.h"
 #include "pull_stream.h"
 #include "esp_heap_caps.h"
+#include "sonya_diaglog.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
@@ -31,6 +32,38 @@ static const char *TAG = "main";
 
 static int s_rec_seconds = CONFIG_REC_SECONDS;
 static volatile bool s_is_recording = false;
+static TickType_t s_last_batt_sent_tick = 0;
+
+static void send_batt_status(const char *reason)
+{
+    if (!sonya_ble_is_connected()) return;
+    int batt_pct = -1;
+    uint16_t batt_mv = 0;
+    uint16_t vbus_mv = 0;
+    bool charging = false;
+    bool vbus_in = false;
+    esp_err_t err = sonya_board_pmu_read_status(&batt_pct, &batt_mv, &vbus_mv, &charging, &vbus_in);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "BATT read fail: %d", (int)err);
+        sonya_ble_send_evt_error("BATT:err=pmu_read");
+        return;
+    }
+    char msg[96];
+    snprintf(msg, sizeof(msg), "BATT:pct=%d,bmv=%u,vbus=%u,chg=%d,in=%d",
+             batt_pct, (unsigned)batt_mv, (unsigned)vbus_mv, charging ? 1 : 0, vbus_in ? 1 : 0);
+    ESP_LOGI(TAG, "TX %s (%s)", msg, reason ? reason : "n/a");
+    sonya_ble_send_evt_error(msg);
+    s_last_batt_sent_tick = xTaskGetTickCount();
+}
+
+static void app_shutdown_sound(void)
+{
+    sonya_diaglog_add("sys", "shutdown");
+    status_ui_show_message("BYE", 800);
+    if (audio_cap_play_tone(520, 120, 55) != 0) {
+        ESP_LOGW(TAG, "shutdown beep failed");
+    }
+}
 
 static const char *reset_reason_str(esp_reset_reason_t r)
 {
@@ -100,8 +133,14 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
     switch (cmd) {
     case PROTO_CMD_PING:
         ESP_LOGI(TAG, "RX: PING");
-        if (sonya_ble_is_connected())
+        if (sonya_ble_is_connected()) {
             sonya_ble_send_evt_error("PONG");
+            send_batt_status("ping");
+        }
+        break;
+    case PROTO_CMD_BATT:
+        ESP_LOGI(TAG, "RX: BATT");
+        send_batt_status("cmd");
         break;
     case PROTO_CMD_REC:
         ESP_LOGI(TAG, "RX: REC (rec_seconds=%d)", s_rec_seconds);
@@ -387,6 +426,11 @@ void app_main(void)
     ESP_ERROR_CHECK(err);
     ESP_LOGI(TAG, "NVS ok");
 
+    // Persistent ring log (post-mortem).
+    sonya_diaglog_init();
+    sonya_diaglog_addf("sys", "boot rr=%s(%d)", reset_reason_str(rr), (int)rr);
+    sonya_diaglog_dump(120);
+
     err = sonya_board_pmu_init();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "pmu_init fail %d", (int)err);
@@ -415,6 +459,14 @@ void app_main(void)
         return;
     }
     ESP_LOGI(TAG, "audio capture running");
+    status_ui_show_message("BEEP", 800);
+    if (audio_cap_play_tone(880, 120, 65) != 0) {
+        ESP_LOGW(TAG, "boot beep failed");
+    }
+    err = esp_register_shutdown_handler(app_shutdown_sound);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "register shutdown handler failed: %d", (int)err);
+    }
 
     err = wake_init(WAKE_MODE_MULTI);
     if (err) {
@@ -434,6 +486,11 @@ void app_main(void)
     TickType_t boot_ready = xTaskGetTickCount() + pdMS_TO_TICKS(2000);
 
     for (;;) {
+        TickType_t loop_now = xTaskGetTickCount();
+        if (sonya_ble_is_connected() &&
+            (s_last_batt_sent_tick == 0 || (loop_now - s_last_batt_sent_tick) >= pdMS_TO_TICKS(30000))) {
+            send_batt_status("periodic");
+        }
         bool trig = wake_poll_or_wait(100);
         if (!trig) continue;
         TickType_t now = xTaskGetTickCount();
@@ -508,6 +565,8 @@ void app_main(void)
         int want = cap_sec * sr * 2 + (int)((tail_ms * (uint32_t)sr * 2U) / 1000U);
 
         ESP_LOGI(TAG, "REC_START cap=%d sec sr=%d want=%d", cap_sec, sr, want);
+        sonya_diaglog_addf("rec", "start cap=%d sr=%d ble=%d",
+                           cap_sec, sr, sonya_ble_is_connected() ? 1 : 0);
         ESP_LOGI(TAG, "ui: recording on (src_btn=%d)", by_btn ? 1 : 0);
         status_ui_set_recording(true);
         status_ui_set_error(false);
@@ -555,8 +614,11 @@ void app_main(void)
             send_rec_end_meta();
             ESP_LOGI(TAG, "REC_END meta sent: id=%u bytes=%d",
                      (unsigned)rec_store_cur_id(), rec_store_total_bytes());
+            sonya_diaglog_addf("rec", "end id=%u bytes=%d ble=1",
+                               (unsigned)rec_store_cur_id(), rec_store_total_bytes());
         } else {
             ESP_LOGI(TAG, "recorded %d bytes (no BLE, dropped)", rec_store_total_bytes());
+            sonya_diaglog_addf("rec", "end bytes=%d ble=0", rec_store_total_bytes());
         }
 
         // Clear long suspend immediately after finishing a recording.

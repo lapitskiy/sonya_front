@@ -112,21 +112,6 @@ static void color_test_timer_cb(lv_timer_t *t)
     s_color_idx++;
 }
 
-static void task_panel_visible(void *arg)
-{
-    (void)arg;
-    // Give LVGL a moment to render the first black frame before enabling visibility.
-    vTaskDelay(pdMS_TO_TICKS(200));
-    if (!s_io || !s_panel) {
-        vTaskDelete(NULL);
-        return;
-    }
-    esp_lcd_panel_disp_on_off(s_panel, true);
-    const uint8_t br = 0xFF;
-    esp_lcd_panel_io_tx_param(s_io, 0x51, &br, 1);
-    vTaskDelete(NULL);
-}
-
 static void ok_set_opa(void *obj, int32_t v)
 {
     if (!obj) return;
@@ -492,8 +477,11 @@ int ui_lvgl_init(void)
              (unsigned)s_img_bt_off.data_size, (unsigned)s_img_bt_on.data_size);
     lvgl_port_unlock();
 
-    // Enable display + brightness after first frame.
-    xTaskCreate(task_panel_visible, "ui_panel_on", 2048, NULL, 4, NULL);
+    // Enable display + brightness immediately.
+    // If something crashes soon after boot, keeping the panel dark makes debugging impossible.
+    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
+    const uint8_t br = 0xFF;
+    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(s_io, 0x51, &br, 1));
 
     // UI event queue + async worker (low priority) to avoid impacting audio capture.
     if (!s_evt_q) {

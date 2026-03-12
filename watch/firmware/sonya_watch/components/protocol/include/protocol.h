@@ -60,6 +60,7 @@ typedef enum {
     PROTO_CMD_PING,
     PROTO_CMD_REC,
     PROTO_CMD_SETREC,
+    PROTO_CMD_BATT,
     PROTO_CMD_GET,
     PROTO_CMD_DONE,
 } proto_cmd_t;

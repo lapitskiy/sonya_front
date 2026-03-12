@@ -149,6 +149,7 @@ object PendingActionsSync {
                                     text = desc,
                                     urgent = urgent,
                                     important = important,
+                                    type = "task",
                                 )
                             )
                         }
