@@ -195,6 +195,10 @@ object PendingActionsSync {
                     val dueAt = a.time?.trim().orEmpty()
                     val dueEpochMs = parseEpochMs(dueAt) ?: continue
                     val dayType = dayTypeByEpochMs(dueEpochMs)
+                    val dueDateOnly = Instant.ofEpochMilli(dueEpochMs)
+                        .atZone(ZoneId.systemDefault())
+                        .toLocalDate()
+                        .toString()
                     val text = a.text?.trim().takeUnless { it.isNullOrBlank() } ?: "Напоминание"
                     try {
                         withContext(Dispatchers.IO) {
@@ -205,7 +209,7 @@ object PendingActionsSync {
                                     urgent = false,
                                     important = false,
                                     type = dayType,
-                                    dueDate = dueAt,
+                                    dueDate = dueDateOnly,
                                 )
                             )
                         }
@@ -330,6 +334,10 @@ object PendingActionsSync {
                         val dueEpochMs = parseEpochMs(dueAt)
                         if (dueEpochMs != null) {
                             val dayType = dayTypeByEpochMs(dueEpochMs)
+                            val dueDateOnly = Instant.ofEpochMilli(dueEpochMs)
+                                .atZone(ZoneId.systemDefault())
+                                .toLocalDate()
+                                .toString()
                             val text = r.payload?.received?.text?.trim().takeUnless { it.isNullOrBlank() } ?: "Напоминание"
                             try {
                                 withContext(Dispatchers.IO) {
@@ -340,7 +348,7 @@ object PendingActionsSync {
                                             urgent = false,
                                             important = false,
                                             type = dayType,
-                                            dueDate = dueAt,
+                                            dueDate = dueDateOnly,
                                         )
                                     )
                                 }

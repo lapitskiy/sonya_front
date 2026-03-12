@@ -908,6 +908,11 @@ class VoiceRecognitionService : Service() {
 
         val text = taskText.ifBlank { "Напоминание" }
         val dayType = dayTypeByDueAt(dueAt)
+        val dueDateOnly = parseDateTimeToZoned(dueAt)
+            ?.withZoneSameInstant(ZoneId.systemDefault())
+            ?.toLocalDate()
+            ?.toString()
+            ?: return
         serviceScope.launch {
             try {
                 ApiClient.instance.createTask(
@@ -917,7 +922,7 @@ class VoiceRecognitionService : Service() {
                         urgent = false,
                         important = false,
                         type = dayType,
-                        dueDate = dueAt,
+                        dueDate = dueDateOnly,
                     )
                 )
                 Log.i("TASKS", "Mirrored approx-alarm to /tasks: type=$dayType due=$dueAt text='$text'")
