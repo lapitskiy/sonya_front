@@ -187,6 +187,35 @@ object PendingActionsSync {
                 Log.i("SYNC", "scheduleAll returned scheduledIds=$scheduledIds (reason=$reason)")
                 scheduledTotal += scheduledIds.size
 
+                // Mirror newly scheduled approx-alarms into /tasks so they appear on Day screen.
+                for (a in items) {
+                    if (a.id <= 0) continue
+                    if (a.type.trim().lowercase() != "approx-alarm") continue
+                    if (PendingActionStore.isMirroredToTasks(context, a.id)) continue
+                    val dueAt = a.time?.trim().orEmpty()
+                    val dueEpochMs = parseEpochMs(dueAt) ?: continue
+                    val dayType = dayTypeByEpochMs(dueEpochMs)
+                    val text = a.text?.trim().takeUnless { it.isNullOrBlank() } ?: "Напоминание"
+                    try {
+                        withContext(Dispatchers.IO) {
+                            ApiClient.instance.createTask(
+                                CreateTaskRequest(
+                                    deviceId = deviceId,
+                                    text = text,
+                                    urgent = false,
+                                    important = false,
+                                    type = dayType,
+                                    dueDate = dueAt,
+                                )
+                            )
+                        }
+                        PendingActionStore.markMirroredToTasks(context.applicationContext, a.id)
+                        Log.i("TASKS", "Mirrored pending approx-alarm to /tasks: action_id=${a.id} dayType=$dayType due=$dueAt")
+                    } catch (t: Throwable) {
+                        Log.w("TASKS", "Failed to mirror pending approx-alarm action_id=${a.id}: ${t.message}")
+                    }
+                }
+
                 // Retry ACK for locally scheduled items too:
                 // if initial ACK failed due to network, backend can stay "pending" forever.
                 val retryScheduledIds = items
@@ -290,6 +319,38 @@ object PendingActionsSync {
                         continue
                     }
                     scheduledTotal += scheduled.size
+
+                    // Mirror newly scheduled approx-alarms from requests into /tasks as Day entries.
+                    if (action.type.trim().lowercase() == "approx-alarm") {
+                        if (PendingActionStore.isMirroredToTasks(context, paId)) {
+                            // Already mirrored before; skip duplicate task creation.
+                            continue
+                        }
+                        val dueAt = action.time?.trim().orEmpty()
+                        val dueEpochMs = parseEpochMs(dueAt)
+                        if (dueEpochMs != null) {
+                            val dayType = dayTypeByEpochMs(dueEpochMs)
+                            val text = r.payload?.received?.text?.trim().takeUnless { it.isNullOrBlank() } ?: "Напоминание"
+                            try {
+                                withContext(Dispatchers.IO) {
+                                    ApiClient.instance.createTask(
+                                        CreateTaskRequest(
+                                            deviceId = deviceId,
+                                            text = text,
+                                            urgent = false,
+                                            important = false,
+                                            type = dayType,
+                                            dueDate = dueAt,
+                                        )
+                                    )
+                                }
+                                PendingActionStore.markMirroredToTasks(context.applicationContext, paId)
+                                Log.i("TASKS", "Mirrored requests approx-alarm to /tasks: action_id=$paId dayType=$dayType due=$dueAt")
+                            } catch (t: Throwable) {
+                                Log.w("TASKS", "Failed to mirror requests approx-alarm action_id=$paId: ${t.message}")
+                            }
+                        }
+                    }
 
                     for (id in scheduled) {
                         try {

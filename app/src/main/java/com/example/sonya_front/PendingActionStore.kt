@@ -15,6 +15,7 @@ object PendingActionStore {
     private const val PREFS = "pending_actions_store"
     private const val KEY_SCHEDULED = "scheduled_ids"
     private const val KEY_HANDLED = "handled_ids"
+    private const val KEY_MIRRORED_TO_TASKS = "mirrored_to_tasks_ids"
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -55,6 +56,17 @@ object PendingActionStore {
         val handled = (p.getStringSet(KEY_HANDLED, emptySet()) ?: emptySet()).toMutableSet()
         if (!handled.remove(id.toString())) return
         p.edit().putStringSet(KEY_HANDLED, handled).apply()
+    }
+
+    fun isMirroredToTasks(ctx: Context, id: Int): Boolean =
+        prefs(ctx).getStringSet(KEY_MIRRORED_TO_TASKS, emptySet())?.contains(id.toString()) == true
+
+    fun markMirroredToTasks(ctx: Context, id: Int) {
+        if (id <= 0) return
+        val p = prefs(ctx)
+        val cur = (p.getStringSet(KEY_MIRRORED_TO_TASKS, emptySet()) ?: emptySet()).toMutableSet()
+        if (!cur.add(id.toString())) return
+        p.edit().putStringSet(KEY_MIRRORED_TO_TASKS, cur).apply()
     }
 }
 
