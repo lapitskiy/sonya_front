@@ -21,6 +21,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.sqrt
 
 data class SonyaWatchUiState(
@@ -86,6 +87,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     private var lastBattMvSample: Int? = null
     private var lastBattSampleAtMs: Long = 0L
     private var battDrainRateEmaMvPerMin: Double? = null
+    private var battRateSampleCount: Int = 0
 
     private lateinit var ble: SonyaWatchBleClient
 
@@ -184,6 +186,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
         lastBattMvSample = null
         lastBattSampleAtMs = 0L
         battDrainRateEmaMvPerMin = null
+        battRateSampleCount = 0
         _ui.value = _ui.value.copy(downloadTotalBytes = 0, downloadOffsetBytes = 0, bytesTotal = 0)
     }
 
@@ -477,6 +480,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
             etaMin = null
             drainRateInt = null
             battDrainRateEmaMvPerMin = null
+            battRateSampleCount = 0
         } else {
             val prevMv = lastBattMvSample
             val prevAt = lastBattSampleAtMs
@@ -491,14 +495,16 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                         } else {
                             battDrainRateEmaMvPerMin!! * 0.7 + instRate * 0.3
                         }
+                        battRateSampleCount = (battRateSampleCount + 1).coerceAtMost(1000)
                     }
                 }
             }
             val rate = battDrainRateEmaMvPerMin
             drainRateInt = rate?.toInt()
             val vMin = 3500
-            etaMin = if (rate != null && rate > 0.9) {
-                ((bmv - vMin).coerceAtLeast(0).toDouble() / rate).toInt().coerceAtMost(24 * 60)
+            etaMin = if (rate != null && rate > 0.9 && battRateSampleCount >= 2) {
+                val remainingMv = (bmv - vMin).coerceAtLeast(0)
+                if (remainingMv == 0) 0 else ceil(remainingMv.toDouble() / rate).toInt().coerceIn(1, 24 * 60)
             } else {
                 null
             }
