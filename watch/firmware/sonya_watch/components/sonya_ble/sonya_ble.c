@@ -31,6 +31,7 @@ static const ble_uuid128_t sonya_tx_uuid =
 
 static uint16_t tx_val_handle;
 static uint16_t conn_handle = BLE_HS_CONN_HANDLE_NONE;
+static bool s_conn_power_save = true;
 static sonya_ble_rx_cb_t rx_cb;
 static void *rx_arg;
 static char device_name[32];
@@ -100,12 +101,14 @@ static int gatt_access(uint16_t conn, uint16_t attr_handle,
 }
 
 static int start_advertising(void);
+static int apply_conn_params(bool power_save);
 
 static void on_connect(struct ble_gap_event *event, void *arg)
 {
     conn_handle = event->connect.conn_handle;
     ESP_LOGI(TAG, "BLE connected, conn_handle=%d", conn_handle);
     sonya_diaglog_addf("ble", "connect h=%d", (int)conn_handle);
+    (void)apply_conn_params(s_conn_power_save);
 }
 
 static void on_disconnect(struct ble_gap_event *event, void *arg)
@@ -160,6 +163,10 @@ static int start_advertising(void)
     memset(&adv_params, 0, sizeof(adv_params));
     adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
     adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
+    // Use moderately slow advertising while idle to reduce radio duty cycle.
+    // Units are 0.625ms -> 320..640 => 200..400ms.
+    adv_params.itvl_min = 320;
+    adv_params.itvl_max = 640;
 
     rc = ble_gap_adv_start(s_own_addr_type, NULL, BLE_HS_FOREVER,
                            &adv_params, gap_event, NULL);
@@ -230,6 +237,33 @@ int sonya_ble_init(const char *name, sonya_ble_rx_cb_t cb, void *arg)
     nimble_port_freertos_init(host_task);
 
     ESP_LOGI(TAG, "BLE init done");
+    return 0;
+}
+
+static int apply_conn_params(bool power_save)
+{
+    if (conn_handle == BLE_HS_CONN_HANDLE_NONE) return 0;
+    struct ble_gap_upd_params p;
+    memset(&p, 0, sizeof(p));
+    if (power_save) {
+        // 60..90ms, latency 4 (skip up to 4 intervals), supervision 5s.
+        p.itvl_min = 48;
+        p.itvl_max = 72;
+        p.latency = 4;
+        p.supervision_timeout = 500;
+    } else {
+        // 15..30ms, no latency for responsive streaming/commands.
+        p.itvl_min = 12;
+        p.itvl_max = 24;
+        p.latency = 0;
+        p.supervision_timeout = 400;
+    }
+    int rc = ble_gap_update_params(conn_handle, &p);
+    if (rc != 0) {
+        ESP_LOGW(TAG, "conn params update failed rc=%d ps=%d", rc, power_save ? 1 : 0);
+        return -1;
+    }
+    ESP_LOGI(TAG, "conn params update requested ps=%d", power_save ? 1 : 0);
     return 0;
 }
 
@@ -335,4 +369,10 @@ int sonya_ble_send_evt_error(const char *msg)
 bool sonya_ble_is_connected(void)
 {
     return conn_handle != BLE_HS_CONN_HANDLE_NONE;
+}
+
+int sonya_ble_set_conn_power_save(bool enable)
+{
+    s_conn_power_save = enable;
+    return apply_conn_params(enable);
 }

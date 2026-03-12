@@ -124,7 +124,7 @@ fun SonyaWatchScreen(
         }
         if (ui.batteryDrainMvPerMin != null) {
             Text(
-                text = "Разряд ~${ui.batteryDrainMvPerMin} mV/мин",
+                text = "Разряд ~${ui.batteryDrainMvPerMin} mV/мин (сред.)",
                 fontSize = 11.sp,
                 color = Color.Gray,
                 modifier = Modifier.padding(top = 2.dp)

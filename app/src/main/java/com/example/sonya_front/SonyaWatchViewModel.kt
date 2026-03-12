@@ -86,8 +86,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     private var batteryPollJob: Job? = null
     private var lastBattMvSample: Int? = null
     private var lastBattSampleAtMs: Long = 0L
-    private var battDrainRateEmaMvPerMin: Double? = null
-    private var battRateSampleCount: Int = 0
+    private val battRateSamples = ArrayList<Double>(8)
 
     private lateinit var ble: SonyaWatchBleClient
 
@@ -185,8 +184,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
         pendingOffset = 0
         lastBattMvSample = null
         lastBattSampleAtMs = 0L
-        battDrainRateEmaMvPerMin = null
-        battRateSampleCount = 0
+        battRateSamples.clear()
         _ui.value = _ui.value.copy(downloadTotalBytes = 0, downloadOffsetBytes = 0, bytesTotal = 0)
     }
 
@@ -479,8 +477,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
         if (chargingNow || bmv == null) {
             etaMin = null
             drainRateInt = null
-            battDrainRateEmaMvPerMin = null
-            battRateSampleCount = 0
+            battRateSamples.clear()
         } else {
             val prevMv = lastBattMvSample
             val prevAt = lastBattSampleAtMs
@@ -490,19 +487,21 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                 if (dmvDrop > 0) {
                     val instRate = dmvDrop.toDouble() * 60_000.0 / dtMs.toDouble()
                     if (instRate in 1.0..300.0) {
-                        battDrainRateEmaMvPerMin = if (battDrainRateEmaMvPerMin == null) {
-                            instRate
-                        } else {
-                            battDrainRateEmaMvPerMin!! * 0.7 + instRate * 0.3
+                        battRateSamples.add(instRate)
+                        if (battRateSamples.size > 6) {
+                            battRateSamples.removeAt(0)
                         }
-                        battRateSampleCount = (battRateSampleCount + 1).coerceAtMost(1000)
                     }
                 }
             }
-            val rate = battDrainRateEmaMvPerMin
+            val rate = if (battRateSamples.isNotEmpty()) {
+                battRateSamples.sum() / battRateSamples.size.toDouble()
+            } else {
+                null
+            }
             drainRateInt = rate?.toInt()
             val vMin = 3500
-            etaMin = if (rate != null && rate > 0.9 && battRateSampleCount >= 2) {
+            etaMin = if (rate != null && rate > 0.9 && battRateSamples.size >= 2) {
                 val remainingMv = (bmv - vMin).coerceAtLeast(0)
                 if (remainingMv == 0) 0 else ceil(remainingMv.toDouble() / rate).toInt().coerceIn(1, 24 * 60)
             } else {

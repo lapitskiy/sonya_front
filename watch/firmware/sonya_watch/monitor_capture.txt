@@ -1,32 +1,93 @@
 capture_start port=/dev/ttyACM0 baud=115200 max_lines=200
-I (201) esp_image: segment 4: paddr=000f6a84 vaddr=4037c0a8 sizeI (5128) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=88 avg=19) R(max=89 avg=19)
-I (5358) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (6088) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=45 avg=11) R(max=44 avg=11)
-I (7048) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=68 avg=21) R(max=69 avg=22)
-I (7358) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (8008) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=65 avg=18) R(max=68 avg=18)
-I (8968) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=52 avg=15) R(max=52 avg=16)
-I (9358) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (9928) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=91 avg=27) R(max=88 avg=28)
-I (10888) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=58 avg=17) R(max=58 avg=17)
-I (11258) audio_cap_diag: eff_sr ~= 15993 Hz (frames=160256 dt=10019996us)
-I (11358) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (11848) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=38 avg=10) R(max=39 avg=10)
-I (12808) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=41 avg=14) R(max=39 avg=14)
-I (13358) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (13768) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=91 avg=33) R(max=93 avg=32)
-I (14728) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=24 avg=7) R(max=24 avg=7)
-I (15358) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (15688) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=40 avg=12) R(max=43 avg=12)
-I (16388) wake: btn_dbg: stop
-I (16648) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=41 avg=13) R(max=45 avg=13)
-I (17358) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (17608) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=68 avg=22) R(max=70 avg=23)
-I (18568) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=61 avg=22) R(max=64 avg=22)
-I (19358) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (19528) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=55 avg=18) R(max=57 avg=18)
-I (20488) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=81 avg=22) R(max=79 avg=22)
-I (21278) audio_cap_diag: eff_sr ~= 15993 Hz (frames=160256 dt=10019999us)
-I (21358) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (21448) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=50 avg=17) R(max=55 avg=18)
-I (22408) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=70 avg=18) R(max=68 avg=18)
+hb no_uart_data_for=2s
+hb no_uart_data_for=3s
+hb no_uart_data_for=4s
+hb no_uart_data_for=5s
+hb no_uart_data_for=6s
+hb no_uart_data_for=7s
+hb no_uart_data_for=8s
+hb no_uart_data_for=9s
+hb no_uart_data_for=10s
+hb no_uart_data_for=11s
+hb no_uart_data_for=12s
+hb no_uart_data_for=13s
+hb no_uart_data_for=14s
+hb no_uart_data_for=15s
+hb no_uart_data_for=16s
+hb no_uart_data_for=17s
+hb no_uart_data_for=18s
+hb no_uart_data_for=19s
+hb no_uart_data_for=20s
+hb no_uart_data_for=21s
+hb no_uart_data_for=22s
+hb no_uart_data_for=23s
+hb no_uart_data_for=24s
+hb no_uart_data_for=25s
+I (200) esp_image: segment 4: paddr=000f6ae4 vaddr=4037c0b8 sizeI (31888) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+hb no_uart_data_for=2s
+hb no_uart_data_for=3s
+hb no_uart_data_for=4s
+hb no_uart_data_for=5s
+hb no_uart_data_for=6s
+hb no_uart_data_for=7s
+hb no_uart_data_for=8s
+hb no_uart_data_for=9s
+hb no_uart_data_for=10s
+hb no_uart_data_for=11s
+hb no_uart_data_for=12s
+hb no_uart_data_for=13s
+hb no_uart_data_for=14s
+hb no_uart_data_for=15s
+hb no_uart_data_for=16s
+hb no_uart_data_for=17s
+hb no_uart_data_for=18s
+hb no_uart_data_for=19s
+hb no_uart_data_for=20s
+hb no_uart_data_for=21s
+hb no_uart_data_for=22s
+hb no_uart_data_for=23s
+hb no_uart_data_for=24s
+hb no_uart_data_for=25s
+hb no_uart_data_for=26s
+hb no_uart_data_for=27s
+hb no_uart_data_for=28s
+hb no_uart_data_for=29s
+I (61808) main: PWRMON: pct=0 bmv=3255 vbus=4443 in=1 chg=1 bat=1 ble=0 rec=0 mic=0 dmv=17 rate=16 mV/min
+I (61928) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+hb no_uart_data_for=2s
+hb no_uart_data_for=3s
+hb no_uart_data_for=4s
+hb no_uart_data_for=5s
+hb no_uart_data_for=6s
+hb no_uart_data_for=7s
+hb no_uart_data_for=8s
+hb no_uart_data_for=9s
+hb no_uart_data_for=10s
+hb no_uart_data_for=11s
+hb no_uart_data_for=12s
+hb no_uart_data_for=13s
+hb no_uart_data_for=14s
+hb no_uart_data_for=15s
+hb no_uart_data_for=16s
+hb no_uart_data_for=17s
+hb no_uart_data_for=18s
+hb no_uart_data_for=19s
+hb no_uart_data_for=20s
+hb no_uart_data_for=21s
+hb no_uart_data_for=22s
+hb no_uart_data_for=23s
+hb no_uart_data_for=24s
+hb no_uart_data_for=25s
+hb no_uart_data_for=26s
+hb no_uart_data_for=27s
+hb no_uart_data_for=28s
+hb no_uart_data_for=29s
+I (91928) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+hb no_uart_data_for=2s
+hb no_uart_data_for=3s
+hb no_uart_data_for=4s
+hb no_uart_data_for=5s
+hb no_uart_data_for=6s
+hb no_uart_data_for=7s
+hb no_uart_data_for=8s
+hb no_uart_data_for=9s

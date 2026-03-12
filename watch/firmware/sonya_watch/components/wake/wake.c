@@ -36,8 +36,9 @@ static TickType_t s_last_wwe_tick = 0;
 static TickType_t s_last_wwe_detect_tick = 0;
 static TickType_t s_last_cmd_tick = 0;
 static volatile uint32_t s_btn_isr_cnt = 0;
-static TaskHandle_t s_btn_dbg_task = NULL;
+static TaskHandle_t __attribute__((unused)) s_btn_dbg_task = NULL;
 static TickType_t s_last_btn_hb_tick = 0;
+#define BTN_HB_IDLE_MS 30000
 
 #define CMD_QUEUE_LEN 4
 #define CMD_MAX_LEN 32
@@ -310,7 +311,7 @@ static void button_isr(void *arg)
     s_wake_pending = true;
 }
 
-static void btn_dbg_task_fn(void *arg)
+static void __attribute__((unused)) btn_dbg_task_fn(void *arg)
 {
     (void)arg;
     int cfg_gpio = CONFIG_WAKE_BUTTON_GPIO;
@@ -417,9 +418,7 @@ static int button_init(void)
         ESP_LOGW(TAG, "gpio_isr_handler_add(gpio=%d): %s (%d)", gpio, esp_err_to_name(err), (int)err);
     }
 
-    if (!s_btn_dbg_task) {
-        (void)xTaskCreate(btn_dbg_task_fn, "btn_dbg", 3072, NULL, 1, &s_btn_dbg_task);
-    }
+    // Keep idle logs quiet: no dedicated GPIO debug task in normal firmware.
     return 0;
 }
 
@@ -539,7 +538,7 @@ bool wake_poll_or_wait(uint32_t timeout_ms)
         while (elapsed < timeout_ms) {
             TickType_t now_tick = xTaskGetTickCount();
             if (s_last_btn_hb_tick == 0) s_last_btn_hb_tick = now_tick;
-            if ((now_tick - s_last_btn_hb_tick) >= pdMS_TO_TICKS(2000)) {
+            if ((now_tick - s_last_btn_hb_tick) >= pdMS_TO_TICKS(BTN_HB_IDLE_MS)) {
                 ESP_LOGI(TAG, "btn_hb: gpio%d lvl=%d armed=%d pending=%d isr_cnt=%" PRIu32,
                          CONFIG_WAKE_BUTTON_GPIO,
                          gpio_get_level(CONFIG_WAKE_BUTTON_GPIO),

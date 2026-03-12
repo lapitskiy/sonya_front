@@ -62,5 +62,12 @@ int sonya_ble_send_evt_rec_start(void);
 int sonya_ble_send_evt_rec_end(void);
 int sonya_ble_send_evt_error(const char *msg);
 
+/**
+ * @brief Switch BLE connection params between active and power-save profiles.
+ * @param enable true = power-save (higher interval/latency), false = active
+ * @return 0 on success, negative on error
+ */
+int sonya_ble_set_conn_power_save(bool enable);
+
 // Legacy v0 helper used by current app_main; kept for compatibility.
 // Prefer sonya_ble_send_frame for custom protocol types.

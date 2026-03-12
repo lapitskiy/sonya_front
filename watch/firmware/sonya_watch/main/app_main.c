@@ -34,7 +34,8 @@ static int s_rec_seconds = CONFIG_REC_SECONDS;
 static volatile bool s_is_recording = false;
 static TickType_t s_last_batt_sent_tick = 0;
 static bool s_no_mic_mode = false;
-static bool s_audio_ready = false;
+static bool s_audio_initialized = false;
+static bool s_audio_streaming = false;
 static TickType_t s_last_pwrmon_tick = 0;
 static int s_last_pwrmon_bmv = -1;
 
@@ -97,14 +98,14 @@ static void pwrmon_tick(void)
              vbus_in ? 1 : 0, charging ? 1 : 0, battery_present ? 1 : 0,
              sonya_ble_is_connected() ? 1 : 0,
              s_is_recording ? 1 : 0,
-             s_audio_ready ? 1 : 0,
+             s_audio_streaming ? 1 : 0,
              dmv, mv_per_min);
 
     sonya_diaglog_addf("pwr", "bmv=%u dmv=%d r=%d ble=%d rec=%d mic=%d",
                        (unsigned)batt_mv, dmv, mv_per_min,
                        sonya_ble_is_connected() ? 1 : 0,
                        s_is_recording ? 1 : 0,
-                       s_audio_ready ? 1 : 0);
+                       s_audio_streaming ? 1 : 0);
 
     s_last_pwrmon_bmv = (int)batt_mv;
     s_last_pwrmon_tick = now;
@@ -501,6 +502,7 @@ void app_main(void)
         ESP_LOGE(TAG, "ble_init fail %d", err);
         return;
     }
+    (void)sonya_ble_set_conn_power_save(true);
     ESP_LOGI(TAG, "BLE up");
     esp_log_level_set("NimBLE", ESP_LOG_WARN);
 
@@ -513,34 +515,6 @@ void app_main(void)
 #else
         false;
 #endif
-    if (!s_no_mic_mode) {
-        err = audio_cap_init();
-        if (err) {
-            ESP_LOGE(TAG, "audio_cap_init fail %d", err);
-            sonya_ble_send_evt_error("audio init fail");
-            return;
-        }
-        err = audio_cap_start();
-        if (err) {
-            ESP_LOGE(TAG, "audio_cap_start fail %d", err);
-            return;
-        }
-        s_audio_ready = true;
-        ESP_LOGI(TAG, "audio capture running");
-        status_ui_show_message("BEEP", 800);
-        if (audio_cap_play_tone(880, 120, 65) != 0) {
-            ESP_LOGW(TAG, "boot beep failed");
-        }
-        err = esp_register_shutdown_handler(app_shutdown_sound);
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "register shutdown handler failed: %d", (int)err);
-        }
-    } else {
-        s_audio_ready = false;
-        ESP_LOGW(TAG, "NO_MIC_MODE enabled: audio pipeline disabled");
-        status_ui_show_message("NOMIC", 1000);
-    }
-
     wake_mode_t wake_mode =
 #if defined(CONFIG_WAKE_MODE_CMD)
         WAKE_MODE_CMD;
@@ -555,6 +529,44 @@ void app_main(void)
 #endif
     if (s_no_mic_mode && wake_mode != WAKE_MODE_BUTTON) {
         wake_mode = WAKE_MODE_BUTTON;
+    }
+
+    if (!s_no_mic_mode) {
+        err = audio_cap_init();
+        if (err) {
+            ESP_LOGE(TAG, "audio_cap_init fail %d", err);
+            sonya_ble_send_evt_error("audio init fail");
+            return;
+        }
+        s_audio_initialized = true;
+
+        bool need_continuous_audio = (wake_mode == WAKE_MODE_WWE || wake_mode == WAKE_MODE_MULTI);
+        if (need_continuous_audio) {
+            err = audio_cap_start();
+            if (err) {
+                ESP_LOGE(TAG, "audio_cap_start fail %d", err);
+                return;
+            }
+            s_audio_streaming = true;
+            ESP_LOGI(TAG, "audio capture running (continuous mode)");
+        } else {
+            s_audio_streaming = false;
+            ESP_LOGI(TAG, "audio capture idle (on-demand mode)");
+        }
+
+        status_ui_show_message("BEEP", 800);
+        if (audio_cap_play_tone(880, 120, 65) != 0) {
+            ESP_LOGW(TAG, "boot beep failed");
+        }
+        err = esp_register_shutdown_handler(app_shutdown_sound);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "register shutdown handler failed: %d", (int)err);
+        }
+    } else {
+        s_audio_initialized = false;
+        s_audio_streaming = false;
+        ESP_LOGW(TAG, "NO_MIC_MODE enabled: audio pipeline disabled");
+        status_ui_show_message("NOMIC", 1000);
     }
 
     err = wake_init(wake_mode);
@@ -578,7 +590,7 @@ void app_main(void)
         pwrmon_tick();
         TickType_t loop_now = xTaskGetTickCount();
         if (sonya_ble_is_connected() &&
-            (s_last_batt_sent_tick == 0 || (loop_now - s_last_batt_sent_tick) >= pdMS_TO_TICKS(30000))) {
+            (s_last_batt_sent_tick == 0 || (loop_now - s_last_batt_sent_tick) >= pdMS_TO_TICKS(60000))) {
             send_batt_status("periodic");
         }
         bool trig = wake_poll_or_wait(100);
@@ -601,7 +613,7 @@ void app_main(void)
         }
         s_is_recording = true;
 
-        if (!s_audio_ready) {
+        if (!s_audio_initialized) {
             ESP_LOGW(TAG, "wake ignored: NO_MIC mode");
             status_ui_show_message("NOMIC", 1200);
             if (sonya_ble_is_connected()) {
@@ -671,6 +683,22 @@ void app_main(void)
         ESP_LOGI(TAG, "ui: recording on (src_btn=%d)", by_btn ? 1 : 0);
         status_ui_set_recording(true);
         status_ui_set_error(false);
+        (void)sonya_ble_set_conn_power_save(false);
+
+        if (!s_audio_streaming) {
+            err = audio_cap_start();
+            if (err) {
+                ESP_LOGE(TAG, "audio_cap_start (on-demand) fail %d", err);
+                if (sonya_ble_is_connected()) sonya_ble_send_evt_error("audio start fail");
+                status_ui_set_error(true);
+                status_ui_set_recording(false);
+                s_is_recording = false;
+                continue;
+            }
+            s_audio_streaming = true;
+            // Let ring buffer accumulate a minimal amount before flush/record.
+            vTaskDelay(pdMS_TO_TICKS(120));
+        }
         audio_cap_flush();
 
         uint16_t rid = rec_store_begin();
@@ -726,6 +754,12 @@ void app_main(void)
         // Keep a short cooldown to avoid bounce/residual WakeNet detections.
         wake_suspend_ms(0);
         wake_suspend_ms(700);
+
+        if (wake_mode != WAKE_MODE_WWE && wake_mode != WAKE_MODE_MULTI && s_audio_streaming) {
+            audio_cap_stop();
+            s_audio_streaming = false;
+        }
+        (void)sonya_ble_set_conn_power_save(true);
 
         s_is_recording = false;
     }
