@@ -43,6 +43,8 @@ data class SonyaWatchUiState(
     val vbusIn: Boolean? = null,
     val batteryPresent: Boolean? = null,
     val batteryNote: String = "",
+    val batteryEtaMinutes: Int? = null,
+    val batteryDrainMvPerMin: Int? = null,
     val logTail: List<String> = emptyList(),
 )
 
@@ -81,6 +83,9 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     private var liveRecId: Int = -1
     @Volatile private var appVisible: Boolean = false
     private var batteryPollJob: Job? = null
+    private var lastBattMvSample: Int? = null
+    private var lastBattSampleAtMs: Long = 0L
+    private var battDrainRateEmaMvPerMin: Double? = null
 
     private lateinit var ble: SonyaWatchBleClient
 
@@ -176,6 +181,9 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
         expectedSeq = null
         pendingMeta = null
         pendingOffset = 0
+        lastBattMvSample = null
+        lastBattSampleAtMs = 0L
+        battDrainRateEmaMvPerMin = null
         _ui.value = _ui.value.copy(downloadTotalBytes = 0, downloadOffsetBytes = 0, bytesTotal = 0)
     }
 
@@ -461,8 +469,47 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
             "0" -> false
             else -> null
         }
+        val nowMs = System.currentTimeMillis()
+        val chargingNow = (vin == true) || (chg == true) || ((vbus ?: 0) >= 3900)
+        val etaMin: Int?
+        val drainRateInt: Int?
+        if (chargingNow || bmv == null) {
+            etaMin = null
+            drainRateInt = null
+            battDrainRateEmaMvPerMin = null
+        } else {
+            val prevMv = lastBattMvSample
+            val prevAt = lastBattSampleAtMs
+            if (prevMv != null && prevAt > 0L && nowMs > prevAt) {
+                val dtMs = nowMs - prevAt
+                val dmvDrop = prevMv - bmv // >0 when discharging
+                if (dmvDrop > 0) {
+                    val instRate = dmvDrop.toDouble() * 60_000.0 / dtMs.toDouble()
+                    if (instRate in 1.0..300.0) {
+                        battDrainRateEmaMvPerMin = if (battDrainRateEmaMvPerMin == null) {
+                            instRate
+                        } else {
+                            battDrainRateEmaMvPerMin!! * 0.7 + instRate * 0.3
+                        }
+                    }
+                }
+            }
+            val rate = battDrainRateEmaMvPerMin
+            drainRateInt = rate?.toInt()
+            val vMin = 3500
+            etaMin = if (rate != null && rate > 0.9) {
+                ((bmv - vMin).coerceAtLeast(0).toDouble() / rate).toInt().coerceAtMost(24 * 60)
+            } else {
+                null
+            }
+        }
+        if (bmv != null) {
+            lastBattMvSample = bmv
+            lastBattSampleAtMs = nowMs
+        }
         val note = when {
             bat == false -> "АКБ не обнаружен"
+            chargingNow -> "Заряжается"
             pct == 0 && (bmv ?: 0) >= 3600 -> "Процент PMU недостоверен, смотрите mV"
             else -> ""
         }
@@ -473,7 +520,9 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
             charging = chg,
             vbusIn = vin,
             batteryPresent = bat,
-            batteryNote = note
+            batteryNote = note,
+            batteryEtaMinutes = etaMin,
+            batteryDrainMvPerMin = drainRateInt
         )
         appendLog("watch battery: pct=$pct bmv=$bmv vbus=$vbus chg=$chg in=$vin bat=$bat")
         setEvent("WATCH: battery ${pct ?: "?"}%")

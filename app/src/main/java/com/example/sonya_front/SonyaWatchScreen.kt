@@ -114,6 +114,22 @@ fun SonyaWatchScreen(
                 modifier = Modifier.padding(top = 4.dp)
             )
         }
+        if (ui.batteryEtaMinutes != null) {
+            Text(
+                text = "Осталось ~${ui.batteryEtaMinutes} мин",
+                fontSize = 12.sp,
+                color = Color(0xFFB3E5FC),
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+        if (ui.batteryDrainMvPerMin != null) {
+            Text(
+                text = "Разряд ~${ui.batteryDrainMvPerMin} mV/мин",
+                fontSize = 11.sp,
+                color = Color.Gray,
+                modifier = Modifier.padding(top = 2.dp)
+            )
+        }
         if (ui.downloadTotalBytes > 0) {
             val progress =
                 (ui.downloadOffsetBytes.toFloat() / ui.downloadTotalBytes.toFloat()).coerceIn(0f, 1f)
