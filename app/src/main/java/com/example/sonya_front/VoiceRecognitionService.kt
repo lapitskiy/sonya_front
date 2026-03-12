@@ -54,6 +54,11 @@ import kotlinx.coroutines.cancel
 import retrofit2.HttpException
 import java.io.IOException
 import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.LocalDate
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
@@ -744,7 +749,7 @@ class VoiceRecognitionService : Service() {
                 }
 
                 // Some backends may return a direct action payload from /command (e.g. {"type":"text-timer",...}).
-                tryScheduleDirectActionFromCommandResponse(resp, deviceId)
+                tryScheduleDirectActionFromCommandResponse(resp, deviceId, originalText = text)
 
                 // Pull pending actions right after the command is accepted by backend.
                 PendingActionsSync.syncNow(applicationContext, deviceId, reason = "after_command")
@@ -762,6 +767,7 @@ class VoiceRecognitionService : Service() {
     private fun tryScheduleDirectActionFromCommandResponse(
         resp: retrofit2.Response<okhttp3.ResponseBody>,
         deviceId: String,
+        originalText: String,
     ) {
         try {
             if (!resp.isSuccessful) {
@@ -790,6 +796,11 @@ class VoiceRecognitionService : Service() {
                 Log.d("API_CALL", "tryScheduleDirectAction: type or time blank, skip")
                 return
             }
+            val normalizedTime = normalizeApproxAlarmTimeForNightRule(
+                type = type,
+                rawTime = time,
+                originalText = originalText,
+            )
 
             val actionId = parsed.id ?: 0
             if (actionId <= 0) {
@@ -824,10 +835,16 @@ class VoiceRecognitionService : Service() {
             val pa = PendingAction(
                 id = actionId,
                 type = type,
-                time = time,
+                time = normalizedTime,
                 text = parsed.text,
             )
             val scheduledIds = PendingActionsScheduler.scheduleAll(applicationContext, deviceId, listOf(pa))
+            maybeMirrorApproxAlarmToTasks(
+                deviceId = deviceId,
+                actionType = type,
+                dueAt = normalizedTime,
+                taskText = (parsed.text ?: originalText).trim(),
+            )
             // ACK each action scheduled via direct command response.
             // Without this, backend status stays "pending" forever since syncNow won't see it in /pending-actions.
             if (scheduledIds.isNotEmpty() && deviceId.isNotBlank()) {
@@ -855,6 +872,97 @@ class VoiceRecognitionService : Service() {
         } catch (t: Throwable) {
             Log.w("API_CALL", "Direct-action parse/schedule failed: ${t.message}")
         }
+    }
+
+    private fun normalizeApproxAlarmTimeForNightRule(
+        type: String,
+        rawTime: String,
+        originalText: String,
+    ): String {
+        if (type.trim().lowercase() != "approx-alarm") return rawTime
+        val normText = originalText.lowercase(Locale("ru", "RU"))
+        if (!Regex("\\bзавтра\\b").containsMatchIn(normText)) return rawTime
+
+        val now = ZonedDateTime.now(ZoneId.systemDefault())
+        if (now.hour >= 6) return rawTime
+
+        val parsed = parseDateTimeToZoned(rawTime) ?: return rawTime
+        val parsedLocalDate = parsed.withZoneSameInstant(ZoneId.systemDefault()).toLocalDate()
+        val tomorrowLocalDate = now.toLocalDate().plusDays(1)
+        if (parsedLocalDate != tomorrowLocalDate) return rawTime
+
+        val shifted = parsed.minusDays(1).toOffsetDateTime().toString()
+        Log.i("API_CALL", "Night rule applied: 'завтра' before 06:00 -> today; $rawTime -> $shifted")
+        return shifted
+    }
+
+    private fun maybeMirrorApproxAlarmToTasks(
+        deviceId: String,
+        actionType: String,
+        dueAt: String,
+        taskText: String,
+    ) {
+        if (deviceId.isBlank()) return
+        if (actionType.trim().lowercase() != "approx-alarm") return
+        if (dueAt.isBlank()) return
+
+        val text = taskText.ifBlank { "Напоминание" }
+        val dayType = dayTypeByDueAt(dueAt)
+        serviceScope.launch {
+            try {
+                ApiClient.instance.createTask(
+                    CreateTaskRequest(
+                        deviceId = deviceId,
+                        text = text,
+                        urgent = false,
+                        important = false,
+                        type = dayType,
+                        dueDate = dueAt,
+                    )
+                )
+                Log.i("TASKS", "Mirrored approx-alarm to /tasks: type=$dayType due=$dueAt text='$text'")
+            } catch (t: Throwable) {
+                Log.w("TASKS", "Failed to mirror approx-alarm to /tasks: ${t.message}")
+            }
+        }
+    }
+
+    private fun dayTypeByDueAt(dueAt: String): String {
+        val dueDate = parseDateTimeToZoned(dueAt)?.withZoneSameInstant(ZoneId.systemDefault())?.toLocalDate()
+            ?: return "today"
+        val today = LocalDate.now()
+        return when {
+            dueDate.isEqual(today.minusDays(1)) -> "yesterday"
+            dueDate.isEqual(today) -> "today"
+            dueDate.isEqual(today.plusDays(1)) -> "tomorrow"
+            dueDate.isAfter(today.plusDays(1)) -> "future"
+            else -> "today"
+        }
+    }
+
+    private fun parseDateTimeToZoned(raw: String): ZonedDateTime? {
+        val s = raw.trim()
+        if (s.isBlank()) return null
+        val candidates = linkedSetOf(s, s.replace(' ', 'T'))
+        for (c in candidates) {
+            try {
+                return OffsetDateTime.parse(c).toZonedDateTime()
+            } catch (_: Throwable) {
+            }
+            try {
+                return ZonedDateTime.parse(c)
+            } catch (_: Throwable) {
+            }
+            try {
+                return Instant.parse(c).atZone(ZoneId.systemDefault())
+            } catch (_: Throwable) {
+            }
+            try {
+                return java.time.LocalDateTime.parse(c).atZone(ZoneId.systemDefault())
+            } catch (_: Throwable) {
+            }
+        }
+        return null
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
