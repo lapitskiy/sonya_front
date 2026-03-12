@@ -141,15 +141,17 @@ extern "C" esp_err_t sonya_board_pmu_read_status(int *batt_pct,
                                                   uint16_t *batt_mv,
                                                   uint16_t *vbus_mv,
                                                   bool *charging,
-                                                  bool *vbus_in)
+                                                  bool *vbus_in,
+                                                  bool *battery_present)
 {
     if (!s_pmu_ready) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (!batt_pct || !batt_mv || !vbus_mv || !charging || !vbus_in) {
+    if (!batt_pct || !batt_mv || !vbus_mv || !charging || !vbus_in || !battery_present) {
         return ESP_ERR_INVALID_ARG;
     }
 
+    *battery_present = s_pmu.isBatteryConnect();
     *batt_pct = s_pmu.getBatteryPercent();
     *batt_mv = s_pmu.getBattVoltage();
     *vbus_mv = s_pmu.getVbusVoltage();

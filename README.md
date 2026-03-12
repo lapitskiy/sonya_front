@@ -35,3 +35,12 @@ Edit `VoskWakeWordEngine` defaults:
 - `modelAssetDir` (model folder name in assets)
 - `grammarPhrases` (phrases list)
 
+## Firmware targets (watch)
+
+Firmware projects for different watch boards are stored separately:
+
+- `watch/firmware/sonya_watch/` - current board firmware
+- `watch/firmware/waveshare_esp32s3_147/` - firmware for Waveshare ESP32-S3 1.47" board
+
+Do not mix board-specific files (`sdkconfig`, pins, display/touch/PMU drivers) in one folder.
+

@@ -1431,7 +1431,9 @@ fun StatusScreen(
                 delay(1000L)
             }
         }
-        val activeScheduled = remember(activeActions) { activeActions.filter { it.state != "ringing" } }
+        val activeScheduled = remember(activeActions, nowMs) {
+            activeActions.filter { it.state != "ringing" && it.triggerAtEpochMs > nowMs }
+        }
         val activeRinging = remember(activeActions) { activeActions.filter { it.state == "ringing" } }
 
         var statusTab by remember { mutableStateOf(0) } // 0 = active, 1 = tasks

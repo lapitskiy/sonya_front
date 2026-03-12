@@ -1,16 +1,44 @@
 capture_start port=/dev/ttyACM0 baud=115200 max_lines=200
-I (265) esp_image: segment 3: paddr=00152d5c vaddr=3fca43b4 sizeI (15815) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (16045) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=32 avg=6) R(max=32 avg=6)
-I (16715) wake: btn_dbg: stop
-I (16815) wake: WWE hb: det=0 conf=100
-I (17005) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=11 avg=3) R(max=11 avg=2)
-I (17815) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (17965) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=14 avg=5) R(max=15 avg=5)
-I (18925) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=11 avg=2) R(max=8 avg=2)
-I (19815) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (19885) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=13 avg=3) R(max=11 avg=2)
-I (20845) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=14 avg=3) R(max=13 avg=3)
-I (21635) audio_cap_diag: eff_sr ~= 15993 Hz (frames=160256 dt=10020002us)
-I (21805) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=13 avg=3) R(max=10 avg=3)
-I (21815) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (21845) wake: WWE hb: det=0 conf=100
+I (23127) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0I (33137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (35137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (37137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (39137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (41137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (43137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (45137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (47137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (49137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (51137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (53137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (55137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (57137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (59137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (61137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (61177) main: PWRMON: pct=36 bmv=3674 vbus=4443 in=1 chg=1 bat=1 ble=1 rec=0 mic=0 dmv=9 rate=8 mV/min
+I (61427) main: TX BATT:pct=36,bmv=3674,vbus=4443,chg=1,in=1,bat=1 (periodic)
+I (61427) main: RX: BATT
+I (61437) main: TX BATT:pct=36,bmv=3674,vbus=4443,chg=1,in=1,bat=1 (cmd)
+I (63147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (65147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (67147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (69147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (71147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (73147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (75147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (77147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (79147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (81147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (83147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (85147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (87147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (89147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (91147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (91447) main: RX: BATT
+I (91447) main: TX BATT:pct=35,bmv=3674,vbus=4443,chg=1,in=1,bat=1 (cmd)
+I (93147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (95147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (97147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (99147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (101147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (103147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (105147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0

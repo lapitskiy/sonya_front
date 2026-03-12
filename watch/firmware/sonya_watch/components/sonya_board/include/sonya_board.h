@@ -33,7 +33,8 @@ esp_err_t sonya_board_pmu_read_status(int *batt_pct,
                                       uint16_t *batt_mv,
                                       uint16_t *vbus_mv,
                                       bool *charging,
-                                      bool *vbus_in);
+                                      bool *vbus_in,
+                                      bool *battery_present);
 
 #ifdef __cplusplus
 }

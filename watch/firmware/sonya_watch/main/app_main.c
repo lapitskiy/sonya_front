@@ -33,6 +33,10 @@ static const char *TAG = "main";
 static int s_rec_seconds = CONFIG_REC_SECONDS;
 static volatile bool s_is_recording = false;
 static TickType_t s_last_batt_sent_tick = 0;
+static bool s_no_mic_mode = false;
+static bool s_audio_ready = false;
+static TickType_t s_last_pwrmon_tick = 0;
+static int s_last_pwrmon_bmv = -1;
 
 static void send_batt_status(const char *reason)
 {
@@ -42,18 +46,68 @@ static void send_batt_status(const char *reason)
     uint16_t vbus_mv = 0;
     bool charging = false;
     bool vbus_in = false;
-    esp_err_t err = sonya_board_pmu_read_status(&batt_pct, &batt_mv, &vbus_mv, &charging, &vbus_in);
+    bool battery_present = false;
+    esp_err_t err = sonya_board_pmu_read_status(&batt_pct, &batt_mv, &vbus_mv, &charging, &vbus_in, &battery_present);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "BATT read fail: %d", (int)err);
         sonya_ble_send_evt_error("BATT:err=pmu_read");
         return;
     }
     char msg[96];
-    snprintf(msg, sizeof(msg), "BATT:pct=%d,bmv=%u,vbus=%u,chg=%d,in=%d",
-             batt_pct, (unsigned)batt_mv, (unsigned)vbus_mv, charging ? 1 : 0, vbus_in ? 1 : 0);
+    snprintf(msg, sizeof(msg), "BATT:pct=%d,bmv=%u,vbus=%u,chg=%d,in=%d,bat=%d",
+             batt_pct, (unsigned)batt_mv, (unsigned)vbus_mv, charging ? 1 : 0, vbus_in ? 1 : 0, battery_present ? 1 : 0);
     ESP_LOGI(TAG, "TX %s (%s)", msg, reason ? reason : "n/a");
     sonya_ble_send_evt_error(msg);
     s_last_batt_sent_tick = xTaskGetTickCount();
+}
+
+static void pwrmon_tick(void)
+{
+    TickType_t now = xTaskGetTickCount();
+    if (s_last_pwrmon_tick != 0 &&
+        (now - s_last_pwrmon_tick) < pdMS_TO_TICKS(60 * 1000)) {
+        return;
+    }
+
+    int batt_pct = -1;
+    uint16_t batt_mv = 0;
+    uint16_t vbus_mv = 0;
+    bool charging = false;
+    bool vbus_in = false;
+    bool battery_present = false;
+    esp_err_t err = sonya_board_pmu_read_status(&batt_pct, &batt_mv, &vbus_mv, &charging, &vbus_in, &battery_present);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "PWRMON read fail: %d", (int)err);
+        return;
+    }
+
+    int dmv = 0;
+    int mv_per_min = 0;
+    if (s_last_pwrmon_tick != 0 && s_last_pwrmon_bmv > 0) {
+        int dt_ms = (int)(now - s_last_pwrmon_tick) * portTICK_PERIOD_MS;
+        if (dt_ms > 0) {
+            dmv = (int)batt_mv - s_last_pwrmon_bmv;
+            mv_per_min = (dmv * 60000) / dt_ms;
+        }
+    }
+
+    ESP_LOGI(TAG,
+             "PWRMON: pct=%d bmv=%u vbus=%u in=%d chg=%d bat=%d ble=%d rec=%d mic=%d dmv=%d rate=%d mV/min",
+             batt_pct, (unsigned)batt_mv, (unsigned)vbus_mv,
+             vbus_in ? 1 : 0, charging ? 1 : 0, battery_present ? 1 : 0,
+             sonya_ble_is_connected() ? 1 : 0,
+             s_is_recording ? 1 : 0,
+             s_audio_ready ? 1 : 0,
+             dmv, mv_per_min);
+
+    sonya_diaglog_addf("pwr", "bmv=%u dmv=%d r=%d ble=%d rec=%d mic=%d",
+                       (unsigned)batt_mv, dmv, mv_per_min,
+                       sonya_ble_is_connected() ? 1 : 0,
+                       s_is_recording ? 1 : 0,
+                       s_audio_ready ? 1 : 0);
+
+    s_last_pwrmon_bmv = (int)batt_mv;
+    s_last_pwrmon_tick = now;
 }
 
 static void app_shutdown_sound(void)
@@ -144,6 +198,12 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
         break;
     case PROTO_CMD_REC:
         ESP_LOGI(TAG, "RX: REC (rec_seconds=%d)", s_rec_seconds);
+        if (s_no_mic_mode) {
+            if (sonya_ble_is_connected()) {
+                sonya_ble_send_evt_error("NO_MIC:REC_DISABLED");
+            }
+            break;
+        }
         wake_on_rx_cmd("REC");
         break;
     case PROTO_CMD_SETREC:
@@ -447,33 +507,51 @@ void app_main(void)
     // Init UI after BLE: BT/NimBLE needs internal RAM for HCI buffers.
     status_ui_init();
 
-    err = audio_cap_init();
-    if (err) {
-        ESP_LOGE(TAG, "audio_cap_init fail %d", err);
-        sonya_ble_send_evt_error("audio init fail");
-        return;
-    }
-    err = audio_cap_start();
-    if (err) {
-        ESP_LOGE(TAG, "audio_cap_start fail %d", err);
-        return;
-    }
-    ESP_LOGI(TAG, "audio capture running");
-    status_ui_show_message("BEEP", 800);
-    if (audio_cap_play_tone(880, 120, 65) != 0) {
-        ESP_LOGW(TAG, "boot beep failed");
-    }
-    err = esp_register_shutdown_handler(app_shutdown_sound);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "register shutdown handler failed: %d", (int)err);
+    s_no_mic_mode =
+#if CONFIG_NO_MIC_MODE
+        true;
+#else
+        false;
+#endif
+    if (!s_no_mic_mode) {
+        err = audio_cap_init();
+        if (err) {
+            ESP_LOGE(TAG, "audio_cap_init fail %d", err);
+            sonya_ble_send_evt_error("audio init fail");
+            return;
+        }
+        err = audio_cap_start();
+        if (err) {
+            ESP_LOGE(TAG, "audio_cap_start fail %d", err);
+            return;
+        }
+        s_audio_ready = true;
+        ESP_LOGI(TAG, "audio capture running");
+        status_ui_show_message("BEEP", 800);
+        if (audio_cap_play_tone(880, 120, 65) != 0) {
+            ESP_LOGW(TAG, "boot beep failed");
+        }
+        err = esp_register_shutdown_handler(app_shutdown_sound);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "register shutdown handler failed: %d", (int)err);
+        }
+    } else {
+        s_audio_ready = false;
+        ESP_LOGW(TAG, "NO_MIC_MODE enabled: audio pipeline disabled");
+        status_ui_show_message("NOMIC", 1000);
     }
 
-    err = wake_init(WAKE_MODE_MULTI);
+    wake_mode_t wake_mode = WAKE_MODE_MULTI;
+    if (s_no_mic_mode) {
+        wake_mode = WAKE_MODE_BUTTON;
+    }
+
+    err = wake_init(wake_mode);
     if (err) {
         ESP_LOGE(TAG, "wake_init fail %d", err);
         return;
     }
-    ESP_LOGI(TAG, "wake init ok");
+    ESP_LOGI(TAG, "wake init ok (mode=%d)", (int)wake_mode);
 
     err = pull_stream_init();
     if (err) {
@@ -486,6 +564,7 @@ void app_main(void)
     TickType_t boot_ready = xTaskGetTickCount() + pdMS_TO_TICKS(2000);
 
     for (;;) {
+        pwrmon_tick();
         TickType_t loop_now = xTaskGetTickCount();
         if (sonya_ble_is_connected() &&
             (s_last_batt_sent_tick == 0 || (loop_now - s_last_batt_sent_tick) >= pdMS_TO_TICKS(30000))) {
@@ -510,6 +589,17 @@ void app_main(void)
             continue;
         }
         s_is_recording = true;
+
+        if (!s_audio_ready) {
+            ESP_LOGW(TAG, "wake ignored: NO_MIC mode");
+            status_ui_show_message("NOMIC", 1200);
+            if (sonya_ble_is_connected()) {
+                sonya_ble_send_evt_wake();
+                sonya_ble_send_evt_error("NO_MIC:REC_DISABLED");
+            }
+            s_is_recording = false;
+            continue;
+        }
 
         bool by_btn =
 #if defined(CONFIG_WAKE_MODE_BUTTON)

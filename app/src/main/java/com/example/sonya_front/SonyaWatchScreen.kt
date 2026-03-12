@@ -96,7 +96,7 @@ fun SonyaWatchScreen(
             modifier = Modifier.padding(top = 10.dp)
         )
         val battText = if (ui.batteryPercent != null) {
-            "battery=${ui.batteryPercent}%  batt=${ui.batteryMv ?: 0}mV  vbus=${ui.vbusMv ?: 0}mV  chg=${ui.charging ?: false}  in=${ui.vbusIn ?: false}"
+            "battery=${ui.batteryPercent}%  batt=${ui.batteryMv ?: 0}mV  vbus=${ui.vbusMv ?: 0}mV  chg=${ui.charging ?: false}  in=${ui.vbusIn ?: false}  bat=${ui.batteryPresent ?: false}"
         } else {
             "battery=нет данных"
         }
@@ -106,6 +106,14 @@ fun SonyaWatchScreen(
             color = Color.Gray,
             modifier = Modifier.padding(top = 6.dp)
         )
+        if (ui.batteryNote.isNotBlank()) {
+            Text(
+                text = ui.batteryNote,
+                fontSize = 12.sp,
+                color = Color(0xFFFFB300),
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
         if (ui.downloadTotalBytes > 0) {
             val progress =
                 (ui.downloadOffsetBytes.toFloat() / ui.downloadTotalBytes.toFloat()).coerceIn(0f, 1f)

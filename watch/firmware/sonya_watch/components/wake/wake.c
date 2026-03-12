@@ -19,6 +19,10 @@
 
 static const char *TAG = "wake";
 
+#ifndef CONFIG_WAKENET_THRESHOLD_X10000
+#define CONFIG_WAKENET_THRESHOLD_X10000 5200
+#endif
+
 static wake_mode_t s_mode = WAKE_MODE_CMD;
 static bool s_wake_pending = false;
 static uint8_t s_confidence = 100;

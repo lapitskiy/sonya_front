@@ -38,7 +38,7 @@ CONFIG_SR_WN_WN9_HIJOY_TTS=y
 
 # UI: low-level status screen (display bring-up diagnostics)
 # CONFIG_STATUS_SCREEN_ENABLE is not set
-CONFIG_UI_LVGL_ENABLE=y
+# CONFIG_UI_LVGL_ENABLE is not set
 
 # LVGL fonts: make UI readable + allow symbol icons to be visible
 CONFIG_LV_FONT_MONTSERRAT_20=y

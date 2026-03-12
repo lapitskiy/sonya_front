@@ -45,13 +45,16 @@ object PendingActionsScheduler {
         for (a in items) {
             // "ringing" means it already fired; showing/updating countdown makes no sense and can stick at 00:00.
             if (a.state.lowercase() == "ringing") continue
-            val t = a.type.lowercase()
-            if (t != "timer" && t != "text-timer") continue
 
             // Safety: if we are overdue and the alarm didn't fire (OEM/Doze quirks), force-fire while UI is visible.
             val overdueMs = nowEpochMs - a.triggerAtEpochMs
             if (overdueMs > 2500L) {
-                forceFireOverdueTimerAction(ctx, a)
+                forceFireOverdueAction(ctx, a)
+                continue
+            }
+
+            val t = a.type.lowercase()
+            if (t != "timer" && t != "text-timer") {
                 continue
             }
 
@@ -69,7 +72,7 @@ object PendingActionsScheduler {
         }
     }
 
-    private fun forceFireOverdueTimerAction(context: Context, a: ActiveActionsStore.ActiveAction) {
+    private fun forceFireOverdueAction(context: Context, a: ActiveActionsStore.ActiveAction) {
         try {
             // Cancel the scheduled alarm to avoid duplicate triggers later.
             cancelAlarmOnly(context, a.actionId)
@@ -77,7 +80,7 @@ object PendingActionsScheduler {
         }
         try {
             val normalizedType = a.type.lowercase()
-            val defaultSound = normalizedType == "timer" || normalizedType == "text-timer"
+            val defaultSound = normalizedType == "timer" || normalizedType == "text-timer" || normalizedType == "approx-alarm"
             val defaultVibration = defaultSound
 
             val deviceId = "android-" + android.provider.Settings.Secure.getString(context.contentResolver, android.provider.Settings.Secure.ANDROID_ID)

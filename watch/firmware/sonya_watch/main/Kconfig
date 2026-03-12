@@ -51,6 +51,14 @@ menu "Sonya Watch Configuration"
             Codec input gain in dB (esp_codec_dev_set_in_gain).
             If recording is too quiet, increase (e.g. 18..24). Too high can clip.
 
+    config NO_MIC_MODE
+        bool "No-mic mode (keep BLE/button without audio)"
+        default n
+        help
+            For boards without microphone/codec.
+            Audio pipeline is disabled, firmware stays alive with BLE and button only.
+            REC requests return explicit NO_MIC error.
+
     config CHUNK_SIZE
         int "BLE TX chunk payload size (bytes)"
         default 180

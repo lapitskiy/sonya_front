@@ -41,6 +41,8 @@ data class SonyaWatchUiState(
     val vbusMv: Int? = null,
     val charging: Boolean? = null,
     val vbusIn: Boolean? = null,
+    val batteryPresent: Boolean? = null,
+    val batteryNote: String = "",
     val logTail: List<String> = emptyList(),
 )
 
@@ -454,14 +456,26 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
             "0" -> false
             else -> null
         }
+        val bat = when (pairs["bat"]) {
+            "1" -> true
+            "0" -> false
+            else -> null
+        }
+        val note = when {
+            bat == false -> "АКБ не обнаружен"
+            pct == 0 && (bmv ?: 0) >= 3600 -> "Процент PMU недостоверен, смотрите mV"
+            else -> ""
+        }
         _ui.value = _ui.value.copy(
             batteryPercent = pct,
             batteryMv = bmv,
             vbusMv = vbus,
             charging = chg,
-            vbusIn = vin
+            vbusIn = vin,
+            batteryPresent = bat,
+            batteryNote = note
         )
-        appendLog("watch battery: pct=$pct bmv=$bmv vbus=$vbus chg=$chg in=$vin")
+        appendLog("watch battery: pct=$pct bmv=$bmv vbus=$vbus chg=$chg in=$vin bat=$bat")
         setEvent("WATCH: battery ${pct ?: "?"}%")
     }
 
