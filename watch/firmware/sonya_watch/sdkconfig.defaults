@@ -6,7 +6,7 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
 
 # Default wake mode: allow both button and wake phrase
-CONFIG_WAKE_MODE_MULTI=y
+CONFIG_WAKE_MODE_BUTTON=y
 
 # WakeNet sensitivity tuning (0.4000..0.9999 as x10000)
 CONFIG_WAKENET_THRESHOLD_X10000=7200

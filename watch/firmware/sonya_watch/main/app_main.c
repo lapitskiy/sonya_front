@@ -541,8 +541,19 @@ void app_main(void)
         status_ui_show_message("NOMIC", 1000);
     }
 
-    wake_mode_t wake_mode = WAKE_MODE_MULTI;
-    if (s_no_mic_mode) {
+    wake_mode_t wake_mode =
+#if defined(CONFIG_WAKE_MODE_CMD)
+        WAKE_MODE_CMD;
+#elif defined(CONFIG_WAKE_MODE_BUTTON)
+        WAKE_MODE_BUTTON;
+#elif defined(CONFIG_WAKE_MODE_RMS)
+        WAKE_MODE_RMS;
+#elif defined(CONFIG_WAKE_MODE_WWE)
+        WAKE_MODE_WWE;
+#else
+        WAKE_MODE_MULTI;
+#endif
+    if (s_no_mic_mode && wake_mode != WAKE_MODE_BUTTON) {
         wake_mode = WAKE_MODE_BUTTON;
     }
 

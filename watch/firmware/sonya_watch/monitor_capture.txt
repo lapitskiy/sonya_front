@@ -1,44 +1,32 @@
 capture_start port=/dev/ttyACM0 baud=115200 max_lines=200
-I (23127) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0I (33137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (35137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (37137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (39137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (41137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (43137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (45137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (47137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (49137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (51137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (53137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (55137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (57137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (59137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (61137) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (61177) main: PWRMON: pct=36 bmv=3674 vbus=4443 in=1 chg=1 bat=1 ble=1 rec=0 mic=0 dmv=9 rate=8 mV/min
-I (61427) main: TX BATT:pct=36,bmv=3674,vbus=4443,chg=1,in=1,bat=1 (periodic)
-I (61427) main: RX: BATT
-I (61437) main: TX BATT:pct=36,bmv=3674,vbus=4443,chg=1,in=1,bat=1 (cmd)
-I (63147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (65147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (67147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (69147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (71147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (73147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (75147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (77147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (79147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (81147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (83147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (85147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (87147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (89147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (91147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (91447) main: RX: BATT
-I (91447) main: TX BATT:pct=35,bmv=3674,vbus=4443,chg=1,in=1,bat=1 (cmd)
-I (93147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (95147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (97147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (99147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (101147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (103147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (105147) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (201) esp_image: segment 4: paddr=000f6a84 vaddr=4037c0a8 sizeI (5128) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=88 avg=19) R(max=89 avg=19)
+I (5358) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (6088) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=45 avg=11) R(max=44 avg=11)
+I (7048) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=68 avg=21) R(max=69 avg=22)
+I (7358) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (8008) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=65 avg=18) R(max=68 avg=18)
+I (8968) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=52 avg=15) R(max=52 avg=16)
+I (9358) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (9928) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=91 avg=27) R(max=88 avg=28)
+I (10888) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=58 avg=17) R(max=58 avg=17)
+I (11258) audio_cap_diag: eff_sr ~= 15993 Hz (frames=160256 dt=10019996us)
+I (11358) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (11848) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=38 avg=10) R(max=39 avg=10)
+I (12808) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=41 avg=14) R(max=39 avg=14)
+I (13358) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (13768) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=91 avg=33) R(max=93 avg=32)
+I (14728) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=24 avg=7) R(max=24 avg=7)
+I (15358) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (15688) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=40 avg=12) R(max=43 avg=12)
+I (16388) wake: btn_dbg: stop
+I (16648) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=41 avg=13) R(max=45 avg=13)
+I (17358) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (17608) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=68 avg=22) R(max=70 avg=23)
+I (18568) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=61 avg=22) R(max=64 avg=22)
+I (19358) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (19528) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=55 avg=18) R(max=57 avg=18)
+I (20488) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=81 avg=22) R(max=79 avg=22)
+I (21278) audio_cap_diag: eff_sr ~= 15993 Hz (frames=160256 dt=10019999us)
+I (21358) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (21448) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=50 avg=17) R(max=55 avg=18)
+I (22408) audio_cap_diag: mic16_stereo: bytes=2048 frames=512 L(max=70 avg=18) R(max=68 avg=18)
