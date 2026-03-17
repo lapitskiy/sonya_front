@@ -157,6 +157,7 @@ class VoiceRecognitionService : Service() {
         // Действия для паузы/возобновления фоновой прослушки вейк-фразы
         val ACTION_PAUSE_WAKE = "com.example.sonya_front.PAUSE_WAKE_LISTENING"
         val ACTION_RESUME_WAKE = "com.example.sonya_front.RESUME_WAKE_LISTENING"
+        val ACTION_ABORT_COMMAND = "com.example.sonya_front.ABORT_COMMAND"
 
         // Озвучить произвольный текст через TTS сервиса (из других компонентов)
         val ACTION_SPEAK = "com.example.sonya_front.SPEAK_TEXT"
@@ -166,6 +167,10 @@ class VoiceRecognitionService : Service() {
         val ACTION_PROCESS_RECOGNIZED_TEXT = "com.example.sonya_front.PROCESS_RECOGNIZED_TEXT"
         val EXTRA_RECOGNIZED_TEXT = "recognized_text"
         val EXTRA_RECOGNIZED_SOURCE = "recognized_source"
+
+        // Состояние активной записи команды (для UI-кнопки "Отбой").
+        val COMMAND_MODE_STATE_ACTION = "com.example.sonya_front.COMMAND_MODE_STATE"
+        val EXTRA_COMMAND_MODE_ACTIVE = "command_mode_active"
     }
 
     // If TTS init is not ready yet, queue a few phrases (avoid "lost" confirms).
@@ -1000,6 +1005,11 @@ class VoiceRecognitionService : Service() {
                 val source = intent.getStringExtra(EXTRA_RECOGNIZED_SOURCE) ?: "unknown"
                 processRecognizedText(text = text, source = source)
             }
+            ACTION_ABORT_COMMAND -> {
+                if (isContinuousListening) {
+                    abortCommandMode("Отбой с кнопки", voice = "Окей, отбой")
+                }
+            }
         }
         return START_STICKY
     }
@@ -1132,6 +1142,7 @@ class VoiceRecognitionService : Service() {
     private fun enterCommandMode() {
         isWakeVerificationMode = false
         isContinuousListening = true
+        broadcastCommandModeState(true)
         cancelFinalize()
         lastActivityAtMs = SystemClock.elapsedRealtime()
         combinedTextBuilder.clear()
@@ -1166,6 +1177,10 @@ class VoiceRecognitionService : Service() {
 
     private fun broadcastHint(message: String) {
         sendBroadcast(Intent(HINT_UPDATE_ACTION).putExtra(HINT_UPDATE_TEXT, message))
+    }
+
+    private fun broadcastCommandModeState(isActive: Boolean) {
+        sendBroadcast(Intent(COMMAND_MODE_STATE_ACTION).putExtra(EXTRA_COMMAND_MODE_ACTIVE, isActive))
     }
 
     private fun markActivity() {
@@ -1477,6 +1492,7 @@ class VoiceRecognitionService : Service() {
 
     private fun startWakeWordDelayed(delayMs: Long) {
         isContinuousListening = false
+        broadcastCommandModeState(false)
         cancelFinalize()
         stopSpeechRecognizerSafely()
         destroySpeechRecognizerSafely()

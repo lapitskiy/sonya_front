@@ -160,6 +160,10 @@ class MainActivity : ComponentActivity() {
                     val hint = intent.getStringExtra(VoiceRecognitionService.HINT_UPDATE_TEXT)
                     if (!hint.isNullOrBlank()) viewModel.showSnackbar(hint)
                 }
+                VoiceRecognitionService.COMMAND_MODE_STATE_ACTION -> {
+                    val isActive = intent.getBooleanExtra(VoiceRecognitionService.EXTRA_COMMAND_MODE_ACTIVE, false)
+                    viewModel.setCommandModeActive(isActive)
+                }
             }
         }
     }
@@ -173,6 +177,7 @@ class MainActivity : ComponentActivity() {
             addAction(VoiceRecognitionService.RECOGNITION_RESULT_ACTION)
             addAction(VoiceRecognitionService.STATUS_UPDATE_ACTION)
             addAction(VoiceRecognitionService.HINT_UPDATE_ACTION)
+            addAction(VoiceRecognitionService.COMMAND_MODE_STATE_ACTION)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(broadcastReceiver, intentFilter, RECEIVER_EXPORTED)
@@ -265,6 +270,7 @@ class MainActivity : ComponentActivity() {
                                 statusText = viewModel.recognizedText.value,
                                 activeActions = viewModel.activeActions.value,
                                 isWakeListeningEnabled = wakeEnabled,
+                                isCommandModeActive = viewModel.isCommandModeActive.value,
                                 onToggleWakeListening = { enable ->
                                     wakeEnabled = enable
                                     val action = if (enable)
@@ -273,6 +279,12 @@ class MainActivity : ComponentActivity() {
                                         VoiceRecognitionService.ACTION_PAUSE_WAKE
                                     val i = Intent(ctx, VoiceRecognitionService::class.java).apply {
                                         this.action = action
+                                    }
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(i) else ctx.startService(i)
+                                },
+                                onAbortRecording = {
+                                    val i = Intent(ctx, VoiceRecognitionService::class.java).apply {
+                                        action = VoiceRecognitionService.ACTION_ABORT_COMMAND
                                     }
                                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(i) else ctx.startService(i)
                                 },
@@ -1415,7 +1427,9 @@ fun StatusScreen(
     statusText: String,
     activeActions: List<ActiveActionsStore.ActiveAction>,
     isWakeListeningEnabled: Boolean,
+    isCommandModeActive: Boolean,
     onToggleWakeListening: (Boolean) -> Unit,
+    onAbortRecording: () -> Unit,
     onCancel: (Int) -> Unit,
     onDone: (Int, String, String) -> Unit,
     onSnooze: (Int, String, String) -> Unit,
@@ -1453,6 +1467,15 @@ fun StatusScreen(
                     text = if (isWakeListeningEnabled) "Отключить прослушку" else "Включить прослушку",
                     fontSize = 14.sp
                 )
+            }
+
+            if (isCommandModeActive) {
+                Button(
+                    onClick = onAbortRecording,
+                    modifier = Modifier.padding(top = 8.dp)
+                ) {
+                    Text("Отбой", fontSize = 14.sp)
+                }
             }
 
             TabRow(

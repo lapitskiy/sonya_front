@@ -19,6 +19,8 @@ class MainViewModel : ViewModel() {
 
     private val _activeActions = mutableStateOf<List<ActiveActionsStore.ActiveAction>>(emptyList())
     val activeActions: State<List<ActiveActionsStore.ActiveAction>> = _activeActions
+    private val _isCommandModeActive = mutableStateOf(false)
+    val isCommandModeActive: State<Boolean> = _isCommandModeActive
 
     private val _requests = mutableStateOf<List<WhatSaidRequestItem>>(emptyList())
     val requests: State<List<WhatSaidRequestItem>> = _requests
@@ -51,6 +53,10 @@ class MainViewModel : ViewModel() {
 
     fun showSnackbar(message: String) {
         _snackbarMessage.value = message
+    }
+
+    fun setCommandModeActive(active: Boolean) {
+        _isCommandModeActive.value = active
     }
 
     fun clearSnackbar() {
