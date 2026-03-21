@@ -83,7 +83,6 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     private var pullBytesAtLastReport: Int = 0
     private var liveRecId: Int = -1
     @Volatile private var appVisible: Boolean = false
-    private var batteryPollJob: Job? = null
     private data class BattPoint(val atMs: Long, val mv: Int)
     private val battHistory = ArrayList<BattPoint>(16)
 
@@ -106,14 +105,11 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                     viewModelScope.launch {
                         delay(600L)
                         sendPing()
-                        sendBatt()
                         delay(1200L)
                         if (_ui.value.connected) {
                             sendPing()
-                            sendBatt()
                         }
                     }
-                    startBatteryPolling()
                 } else {
                     // Reset protocol state so UI doesn't look "stuck".
                     recording = false
@@ -124,8 +120,6 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                     liveRecId = -1
                     pullTimeoutJob?.cancel()
                     pullTimeoutJob = null
-                    batteryPollJob?.cancel()
-                    batteryPollJob = null
                     _ui.value = _ui.value.copy(downloadTotalBytes = 0, downloadOffsetBytes = 0, bytesTotal = 0)
                     setEvent("Ожидаю подключения к часам…")
                 }
@@ -173,8 +167,6 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     fun disconnect() {
         appendLog("disconnect()")
         ble.disconnect()
-        batteryPollJob?.cancel()
-        batteryPollJob = null
         _ui.value = _ui.value.copy(scanning = false, connected = false, autoConnect = false)
         recording = false
         downloading = false
@@ -419,17 +411,6 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
 
             else -> {
                 appendLog("frame $typeName seq=${f.seq} len=${f.payload.size}")
-            }
-        }
-    }
-
-    private fun startBatteryPolling() {
-        batteryPollJob?.cancel()
-        batteryPollJob = viewModelScope.launch(Dispatchers.Main) {
-            while (_ui.value.connected) {
-                delay(30_000L)
-                if (!_ui.value.connected) break
-                sendBatt()
             }
         }
     }
