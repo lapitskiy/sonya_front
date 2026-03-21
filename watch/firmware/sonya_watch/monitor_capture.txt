@@ -1,20 +1,3 @@
-hb no_uart_data_for=10s
-hb no_uart_data_for=11s
-hb no_uart_data_for=12s
-hb no_uart_data_for=13s
-hb no_uart_data_for=14s
-hb no_uart_data_for=15s
-hb no_uart_data_for=16s
-hb no_uart_data_for=17s
-hb no_uart_data_for=18s
-hb no_uart_data_for=19s
-hb no_uart_data_for=20s
-hb no_uart_data_for=21s
-hb no_uart_data_for=22s
-hb no_uart_data_for=23s
-hb no_uart_data_for=24s
-hb no_uart_data_for=25s
-hb no_uart_data_for=26s
 hb no_uart_data_for=27s
 hb no_uart_data_for=28s
 hb no_uart_data_for=29s
@@ -198,3 +181,20 @@ hb no_uart_data_for=17s
 hb no_uart_data_for=18s
 hb no_uart_data_for=19s
 hb no_uart_data_for=20s
+hb no_uart_data_for=21s
+hb no_uart_data_for=22s
+hb no_uart_data_for=23s
+hb no_uart_data_for=24s
+hb no_uart_data_for=25s
+hb no_uart_data_for=26s
+hb no_uart_data_for=27s
+hb no_uart_data_for=28s
+hb no_uart_data_for=29s
+I (332108) main: RX: BATT
+I (332108) main: TX BATT:pct=100,bmv=4155,vbus=0,chg=0,in=0,bat=1 (cmd)
+I (332148) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+hb no_uart_data_for=2s
+hb no_uart_data_for=3s
+hb no_uart_data_for=4s
+hb no_uart_data_for=5s
+hb no_uart_data_for=6s
