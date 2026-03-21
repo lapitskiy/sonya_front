@@ -72,6 +72,7 @@ data class CommandResponseAction(
     val type: String? = null,
     val time: String? = null,
     val text: String? = null,
+    val error: String? = null,
 )
 
 data class PendingActionsResponse(

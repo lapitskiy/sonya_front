@@ -46,6 +46,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
@@ -74,6 +75,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.luminance
 import androidx.core.content.ContextCompat
 import com.example.sonya_front.ui.theme.Sonya_frontTheme
 import kotlinx.coroutines.delay
@@ -1472,7 +1474,11 @@ fun StatusScreen(
             if (isCommandModeActive) {
                 Button(
                     onClick = onAbortRecording,
-                    modifier = Modifier.padding(top = 8.dp)
+                    modifier = Modifier.padding(top = 8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF9E9E9E),
+                        contentColor = if (Color(0xFF9E9E9E).luminance() < 0.5f) Color.White else Color.Black
+                    )
                 ) {
                     Text("Отбой", fontSize = 14.sp)
                 }

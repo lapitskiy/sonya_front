@@ -744,27 +744,42 @@ class VoiceRecognitionService : Service() {
 
         serviceScope.launch {
             try {
-                val resp = ApiClient.instance.sendCommand(request)
+                var resp = ApiClient.instance.sendCommand(request)
                 Log.d("API_CALL", "Command sent successfully: $request")
 
-                if (resp.isSuccessful) {
+                var unresolvedNoAiConnection = false
+                val shouldRetryNoAiConnection = tryScheduleDirectActionFromCommandResponse(resp, deviceId, originalText = text)
+                if (shouldRetryNoAiConnection) {
+                    Log.w("API_CALL", "Received type=unknown,error=no_ai_connection -> retrying command once")
+                    resp = ApiClient.instance.sendCommand(request)
+                    Log.d("API_CALL", "Retry command sent once for no_ai_connection")
+                    unresolvedNoAiConnection = tryScheduleDirectActionFromCommandResponse(resp, deviceId, originalText = text)
+                }
+
+                if (unresolvedNoAiConnection) {
+                    broadcastStatusUpdate("Ошибка отправки: AI недоступен")
+                    broadcastHint("AI недоступен (no_ai_connection). Повтор не помог.")
+                } else if (resp.isSuccessful) {
                     // Voice feedback: backend accepted the command ("поставилась в работу").
                     vibrateVoiceAck()
                     speakOnMain("Всё ОК", queueMode = TextToSpeech.QUEUE_ADD)
+                    broadcastStatusUpdate("Команда отправлена")
+                } else {
+                    broadcastStatusUpdate("Ошибка отправки: HTTP ${resp.code()}")
                 }
-
-                // Some backends may return a direct action payload from /command (e.g. {"type":"text-timer",...}).
-                tryScheduleDirectActionFromCommandResponse(resp, deviceId, originalText = text)
 
                 // Pull pending actions right after the command is accepted by backend.
                 PendingActionsSync.syncNow(applicationContext, deviceId, reason = "after_command")
             } catch (e: HttpException) {
                 val body = try { e.response()?.errorBody()?.string() } catch (_: Throwable) { null }
                 Log.e("API_CALL_ERROR", "HTTP ${e.code()} while sending command. errorBody=${body ?: "<empty>"} request=$request", e)
+                broadcastStatusUpdate("Ошибка отправки: HTTP ${e.code()}")
             } catch (e: IOException) {
                 Log.e("API_CALL_ERROR", "Network error while sending command. request=$request", e)
+                broadcastStatusUpdate("Ошибка сети при отправке")
             } catch (e: Exception) {
                 Log.e("API_CALL_ERROR", "Unexpected error while sending command. request=$request", e)
+                broadcastStatusUpdate("Ошибка отправки команды")
             }
         }
     }
@@ -773,18 +788,18 @@ class VoiceRecognitionService : Service() {
         resp: retrofit2.Response<okhttp3.ResponseBody>,
         deviceId: String,
         originalText: String,
-    ) {
+    ): Boolean {
         try {
             if (!resp.isSuccessful) {
                 Log.d("API_CALL", "tryScheduleDirectAction: response not successful (${resp.code()}), skip")
-                return
+                return false
             }
-            val raw = try { resp.body()?.string() } catch (_: Throwable) { null } ?: return
+            val raw = try { resp.body()?.string() } catch (_: Throwable) { null } ?: return false
             val trimmed = raw.trim()
             Log.i("API_CALL", "tryScheduleDirectAction raw response: '$trimmed'")
             if (trimmed.isBlank() || trimmed == "null") {
                 Log.d("API_CALL", "tryScheduleDirectAction: blank/null body, skip")
-                return
+                return false
             }
 
             val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
@@ -792,14 +807,19 @@ class VoiceRecognitionService : Service() {
             val parsed = try { adapter.fromJson(trimmed) } catch (e: Throwable) {
                 Log.w("API_CALL", "tryScheduleDirectAction: parse failed: ${e.message}")
                 null
-            } ?: return
+            } ?: return false
 
             val type = parsed.type?.trim().orEmpty()
             val time = parsed.time?.trim().orEmpty()
-            Log.i("API_CALL", "tryScheduleDirectAction parsed: id=${parsed.id} type='$type' time='$time' text='${parsed.text}'")
+            val error = parsed.error?.trim().orEmpty()
+            Log.i("API_CALL", "tryScheduleDirectAction parsed: id=${parsed.id} type='$type' time='$time' text='${parsed.text}' error='$error'")
+            if (type.lowercase() == "unknown" && error.lowercase() == "no_ai_connection") {
+                Log.w("API_CALL", "Direct response reports no_ai_connection")
+                return true
+            }
             if (type.isBlank() || time.isBlank()) {
                 Log.d("API_CALL", "tryScheduleDirectAction: type or time blank, skip")
-                return
+                return false
             }
             val normalizedTime = normalizeApproxAlarmTimeForNightRule(
                 type = type,
@@ -834,7 +854,7 @@ class VoiceRecognitionService : Service() {
                         }
                     }
                 }
-                return
+                return false
             }
 
             val pa = PendingAction(
@@ -874,8 +894,10 @@ class VoiceRecognitionService : Service() {
                     }
                 }
             }
+            return false
         } catch (t: Throwable) {
             Log.w("API_CALL", "Direct-action parse/schedule failed: ${t.message}")
+            return false
         }
     }
 
@@ -1314,6 +1336,7 @@ class VoiceRecognitionService : Service() {
         vibrateVoiceAck()
         speakOnMain("Услышала", queueMode = TextToSpeech.QUEUE_FLUSH)
         broadcastRecognitionResult(t)
+        broadcastStatusUpdate("Отправляю команду на сервер…")
 
         // Backend + "Всё ОК" confirm + sync happen inside sendRequest()/PendingActionsSync.
         sendToServer(t)

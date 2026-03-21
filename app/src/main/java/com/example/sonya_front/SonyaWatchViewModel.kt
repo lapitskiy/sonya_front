@@ -84,9 +84,8 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     private var liveRecId: Int = -1
     @Volatile private var appVisible: Boolean = false
     private var batteryPollJob: Job? = null
-    private var lastBattMvSample: Int? = null
-    private var lastBattSampleAtMs: Long = 0L
-    private val battRateSamples = ArrayList<Double>(8)
+    private data class BattPoint(val atMs: Long, val mv: Int)
+    private val battHistory = ArrayList<BattPoint>(16)
 
     private lateinit var ble: SonyaWatchBleClient
 
@@ -182,9 +181,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
         expectedSeq = null
         pendingMeta = null
         pendingOffset = 0
-        lastBattMvSample = null
-        lastBattSampleAtMs = 0L
-        battRateSamples.clear()
+        battHistory.clear()
         _ui.value = _ui.value.copy(downloadTotalBytes = 0, downloadOffsetBytes = 0, bytesTotal = 0)
     }
 
@@ -477,40 +474,28 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
         if (chargingNow || bmv == null) {
             etaMin = null
             drainRateInt = null
-            battRateSamples.clear()
+            battHistory.clear()
         } else {
-            val prevMv = lastBattMvSample
-            val prevAt = lastBattSampleAtMs
-            if (prevMv != null && prevAt > 0L && nowMs > prevAt) {
-                val dtMs = nowMs - prevAt
-                val dmvDrop = prevMv - bmv // >0 when discharging
-                if (dmvDrop > 0) {
-                    val instRate = dmvDrop.toDouble() * 60_000.0 / dtMs.toDouble()
-                    if (instRate in 1.0..300.0) {
-                        battRateSamples.add(instRate)
-                        if (battRateSamples.size > 6) {
-                            battRateSamples.removeAt(0)
-                        }
-                    }
-                }
+            // Keep a short history window and estimate discharge by trend (not only by "down" steps).
+            battHistory.add(BattPoint(nowMs, bmv))
+            // 8 minutes window with 30s polling ~= up to 16 points.
+            val minTs = nowMs - 8 * 60_000L
+            while (battHistory.isNotEmpty() && battHistory.first().atMs < minTs) {
+                battHistory.removeAt(0)
             }
-            val rate = if (battRateSamples.isNotEmpty()) {
-                battRateSamples.sum() / battRateSamples.size.toDouble()
-            } else {
-                null
+            while (battHistory.size > 16) {
+                battHistory.removeAt(0)
             }
+
+            val rate = estimateDrainRateMvPerMin(battHistory)
             drainRateInt = rate?.toInt()
             val vMin = 3500
-            etaMin = if (rate != null && rate > 0.9 && battRateSamples.size >= 2) {
+            etaMin = if (rate != null && rate >= 1.0) {
                 val remainingMv = (bmv - vMin).coerceAtLeast(0)
                 if (remainingMv == 0) 0 else ceil(remainingMv.toDouble() / rate).toInt().coerceIn(1, 24 * 60)
             } else {
                 null
             }
-        }
-        if (bmv != null) {
-            lastBattMvSample = bmv
-            lastBattSampleAtMs = nowMs
         }
         val note = when {
             bat == false -> "АКБ не обнаружен"
@@ -717,6 +702,29 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
         val cur = _ui.value
         val next = (cur.logTail + line).takeLast(60)
         _ui.value = cur.copy(logTail = next)
+    }
+
+    private fun estimateDrainRateMvPerMin(points: List<BattPoint>): Double? {
+        if (points.size < 4) return null
+        val t0 = points.first().atMs
+        val xs = points.map { (it.atMs - t0).toDouble() / 60_000.0 } // minutes
+        val ys = points.map { it.mv.toDouble() }
+
+        val n = xs.size.toDouble()
+        val sumX = xs.sum()
+        val sumY = ys.sum()
+        val sumXY = xs.zip(ys).sumOf { (x, y) -> x * y }
+        val sumX2 = xs.sumOf { it * it }
+        val denom = n * sumX2 - sumX * sumX
+        if (denom <= 1e-9) return null
+
+        // slope of voltage vs time; discharge rate is -slope.
+        val slopeMvPerMin = (n * sumXY - sumX * sumY) / denom
+        val drain = (-slopeMvPerMin).coerceAtLeast(0.0)
+
+        // Clamp unrealistic UI spikes.
+        if (drain > 300.0) return null
+        return drain
     }
 }
 
