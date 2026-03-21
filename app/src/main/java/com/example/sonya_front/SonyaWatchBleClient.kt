@@ -20,7 +20,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
+import com.example.sonya_front.AppLog as Log
 import java.util.UUID
 import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicBoolean

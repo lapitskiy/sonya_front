@@ -8,7 +8,7 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.SystemClock
 import android.os.Build
-import android.util.Log
+import com.example.sonya_front.AppLog as Log
 import androidx.core.app.ActivityCompat
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment

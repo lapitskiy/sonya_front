@@ -16,7 +16,7 @@ import retrofit2.http.POST
 import retrofit2.http.Query
 import retrofit2.http.PUT
 import retrofit2.http.Path
-import android.util.Log
+import com.example.sonya_front.AppLog as Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Call

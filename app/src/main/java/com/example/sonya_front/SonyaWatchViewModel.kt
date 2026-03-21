@@ -4,7 +4,7 @@ import android.app.Application
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.provider.Settings
-import android.util.Log
+import com.example.sonya_front.AppLog as Log
 import androidx.core.content.ContextCompat
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
@@ -82,6 +82,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     private var pullLastReportAtMs: Long = 0L
     private var pullBytesAtLastReport: Int = 0
     private var liveRecId: Int = -1
+    private var lastBroadcastProgressPct: Int = -1
     @Volatile private var appVisible: Boolean = false
     private data class BattPoint(val atMs: Long, val mv: Int)
     private val battHistory = ArrayList<BattPoint>(16)
@@ -118,6 +119,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                     pendingMeta = null
                     pendingOffset = 0
                     liveRecId = -1
+                    lastBroadcastProgressPct = -1
                     pullTimeoutJob?.cancel()
                     pullTimeoutJob = null
                     _ui.value = _ui.value.copy(downloadTotalBytes = 0, downloadOffsetBytes = 0, bytesTotal = 0)
@@ -269,8 +271,10 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                 pullStartAtMs = System.currentTimeMillis()
                 pullLastReportAtMs = 0L
                 pullBytesAtLastReport = 0
+                lastBroadcastProgressPct = -1
                 _ui.value = _ui.value.copy(bytesTotal = 0, downloadTotalBytes = 0, downloadOffsetBytes = 0)
                 setEvent("$typeName seq=${f.seq}")
+                broadcastStatus("Часы: запись началась")
             }
 
             SonyaWatchProtocol.AUDIO_CHUNK -> {
@@ -342,6 +346,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                     downloadOffsetBytes = pendingOffset.toLong()
                 )
                 reportThroughput(data.size)
+                maybeBroadcastTransferProgress(total = m.totalBytes, offset = pendingOffset)
 
                 if (pendingOffset < m.totalBytes) {
                     if (pendingOffset >= pendingWindowEndOffset) {
@@ -356,6 +361,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
 
             SonyaWatchProtocol.EVT_REC_END -> {
                 setEvent("$typeName seq=${f.seq}")
+                broadcastStatus("Часы: запись завершена, принимаю данные")
                 val meta = parseRecEndMeta(f.payload)
                 if (meta == null) {
                     recording = false
@@ -509,6 +515,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
         pullTimeoutJob = null
         val pcmBytes = pcm.toByteArray()
         appendLog("rec done: pcmBytes=${pcmBytes.size} expected=${m.totalBytes}")
+        broadcastStatus("Часы: данные получены, распознаю речь")
         saveWav(pcmBytes)
     }
 
@@ -623,15 +630,19 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                             putExtra(VoiceRecognitionService.EXTRA_RECOGNIZED_TEXT, text)
                             putExtra(VoiceRecognitionService.EXTRA_RECOGNIZED_SOURCE, "watch_vosk")
                         }
+                        broadcastStatus("Часы: отправляю команду на сервер")
                         ContextCompat.startForegroundService(ctx, intent)
                         _ui.value = _ui.value.copy(lastBackendCommand = "SENT (via service)")
                     } catch (t: Throwable) {
                         appendLog("backend command failed: ${t.javaClass.simpleName}: ${t.message}")
+                        broadcastStatus("Часы: ошибка отправки команды")
                         _ui.value = _ui.value.copy(lastBackendCommand = "ERR: ${t.javaClass.simpleName}")
                     }
                 } else {
                     appendLog("watch transcript: <blank>")
+                    broadcastStatus("Часы: речь не распознана, команда не отправлена")
                     _ui.value = _ui.value.copy(lastTranscript = "")
+                    _ui.value = _ui.value.copy(lastBackendCommand = "ERR: blank transcript")
                 }
 
                 viewModelScope.launch(Dispatchers.Main) {
@@ -676,6 +687,30 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     private fun setEvent(s: String) {
         _ui.value = _ui.value.copy(lastEvent = s)
         appendLog("event: $s")
+    }
+
+    private fun broadcastStatus(status: String) {
+        val ctx = getApplication<Application>().applicationContext
+        ctx.sendBroadcast(
+            Intent(VoiceRecognitionService.STATUS_UPDATE_ACTION).putExtra(
+                VoiceRecognitionService.STATUS_UPDATE_TEXT,
+                status
+            )
+        )
+    }
+
+    private fun maybeBroadcastTransferProgress(total: Int, offset: Int) {
+        if (total <= 0) return
+        val pct = ((offset * 100L) / total.toLong()).toInt().coerceIn(0, 100)
+        val shouldSend = when {
+            pct >= 100 && lastBroadcastProgressPct < 100 -> true
+            lastBroadcastProgressPct < 0 -> true
+            pct - lastBroadcastProgressPct >= 10 -> true
+            else -> false
+        }
+        if (!shouldSend) return
+        lastBroadcastProgressPct = pct
+        broadcastStatus("Часы: передача аудио $pct%")
     }
 
     private fun appendLog(line: String) {

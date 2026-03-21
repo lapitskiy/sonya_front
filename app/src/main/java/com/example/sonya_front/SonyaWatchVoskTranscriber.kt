@@ -1,7 +1,7 @@
 package com.example.sonya_front
 
 import android.content.Context
-import android.util.Log
+import com.example.sonya_front.AppLog as Log
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer

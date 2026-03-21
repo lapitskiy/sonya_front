@@ -7,7 +7,7 @@ import androidx.compose.runtime.State
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.lifecycle.viewModelScope
-import android.util.Log
+import com.example.sonya_front.AppLog as Log
 import kotlinx.coroutines.launch
 
 class MainViewModel : ViewModel() {

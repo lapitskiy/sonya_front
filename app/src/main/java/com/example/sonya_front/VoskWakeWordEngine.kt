@@ -7,7 +7,7 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.SystemClock
-import android.util.Log
+import com.example.sonya_front.AppLog as Log
 import androidx.core.app.ActivityCompat
 import org.json.JSONObject
 import org.vosk.Model

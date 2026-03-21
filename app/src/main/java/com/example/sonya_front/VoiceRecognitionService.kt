@@ -34,7 +34,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
-import android.util.Log
+import com.example.sonya_front.AppLog as Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import com.squareup.moshi.Moshi
@@ -179,6 +179,7 @@ class VoiceRecognitionService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        AppLog.initialize(applicationContext)
         acquireWakeLock()
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
