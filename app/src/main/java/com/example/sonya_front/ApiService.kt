@@ -215,6 +215,21 @@ object ApiClient {
         level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BODY else HttpLoggingInterceptor.Level.BASIC
     }
 
+    private fun maybeLogTimeout(stage: String, call: Call, error: IOException) {
+        val timeout = (error is SocketTimeoutException) || (error.message?.contains("timed out", ignoreCase = true) == true)
+        if (!timeout) return
+        val reqUrl = try { call.request().url } catch (_: Throwable) { null }
+        val full = reqUrl?.toString().orEmpty()
+        val scheme = reqUrl?.scheme ?: "?"
+        val host = reqUrl?.host ?: "?"
+        val port = reqUrl?.port ?: -1
+        Log.e(
+            "API_TIMEOUT",
+            "stage=$stage url=$full scheme=$scheme host=$host port=$port message=${error.message}",
+            error
+        )
+    }
+
     private fun debugEventListenerFactory(): EventListener.Factory {
         if (!BuildConfig.DEBUG) return EventListener.Factory { EventListener.NONE }
         return EventListener.Factory { call ->
@@ -254,6 +269,7 @@ object ApiClient {
 
                 override fun connectFailed(call: Call, inetSocketAddress: java.net.InetSocketAddress, proxy: java.net.Proxy, protocol: Protocol?, ioe: IOException) {
                     Log.w("API_EVT", "[${id()}] connectFailed +${ms()}ms ${ioe.javaClass.simpleName}: ${ioe.message}")
+                    maybeLogTimeout("connectFailed", call, ioe)
                 }
 
                 override fun requestHeadersStart(call: Call) {
@@ -286,6 +302,7 @@ object ApiClient {
 
                 override fun callFailed(call: Call, ioe: IOException) {
                     Log.e("API_EVT", "[${id()}] callFailed +${ms()}ms ${ioe.javaClass.simpleName}: ${ioe.message}")
+                    maybeLogTimeout("callFailed", call, ioe)
                 }
             }
         }
