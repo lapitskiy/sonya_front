@@ -4,6 +4,7 @@ import android.content.Context
 import com.example.sonya_front.AppLog as Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
 import java.time.Instant
 import java.time.LocalDate
 import java.time.OffsetDateTime
@@ -11,6 +12,8 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 
 object PendingActionsSync {
+    private val syncMutex = Mutex()
+
     private fun str(v: Any?): String? = when (v) {
         null -> null
         is String -> v
@@ -101,6 +104,10 @@ object PendingActionsSync {
 
     suspend fun syncNow(context: Context, deviceId: String, reason: String) {
         if (deviceId.isBlank()) return
+        if (!syncMutex.tryLock()) {
+            Log.d("SYNC", "syncNow skipped: already running (reason=$reason)")
+            return
+        }
         Log.i("SYNC", "syncNow start reason=$reason deviceId=$deviceId")
         try {
             val limit = 30
@@ -381,6 +388,8 @@ object PendingActionsSync {
             }
         } catch (t: Throwable) {
             Log.e("SYNC", "Sync FAILED (reason=$reason): ${t.javaClass.simpleName}: ${t.message}", t)
+        } finally {
+            syncMutex.unlock()
         }
     }
 }
