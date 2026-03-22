@@ -206,6 +206,7 @@ data class WhatSaidPendingAction(
 // 3. Объект для создания клиента Retrofit
 object ApiClient {
     private const val EXTERNAL_BASE_URL = "http://188.243.119.154:18000/"
+    private const val LOCAL_BASE_URL = "http://192.168.0.50:18000/"
 
     private val moshi = Moshi.Builder()
         .add(KotlinJsonAdapterFactory())
@@ -228,6 +229,21 @@ object ApiClient {
             "stage=$stage url=$full scheme=$scheme host=$host port=$port message=${error.message}",
             error
         )
+    }
+
+    private fun isReachabilityError(t: Throwable): Boolean {
+        var cur: Throwable? = t
+        while (cur != null) {
+            when (cur) {
+                is SocketTimeoutException,
+                is ConnectException,
+                is UnknownHostException,
+                is java.net.NoRouteToHostException,
+                is java.net.SocketException -> return true
+            }
+            cur = cur.cause
+        }
+        return false
     }
 
     private fun debugEventListenerFactory(): EventListener.Factory {
@@ -331,43 +347,83 @@ object ApiClient {
     }
 
     private val externalApi: BackendApi by lazy { buildApi(EXTERNAL_BASE_URL) }
+    private val localApi: BackendApi by lazy { buildApi(LOCAL_BASE_URL) }
+
+    private suspend fun <T> callWithFallback(
+        endpoint: String,
+        externalCall: suspend BackendApi.() -> T,
+        localCall: suspend BackendApi.() -> T,
+    ): T {
+        return try {
+            Log.i("API_BASE", "Using external base for $endpoint")
+            externalApi.externalCall()
+        } catch (t: Throwable) {
+            if (!isReachabilityError(t)) throw t
+            Log.w(
+                "API_BASE",
+                "External base failed for $endpoint: ${t.javaClass.simpleName}: ${t.message}; fallback to local base $LOCAL_BASE_URL"
+            )
+            localApi.localCall()
+        }
+    }
 
     // Backwards-compatible instance: existing call sites can keep calling ApiClient.instance.sendCommand(...)
     val instance: BackendApi by lazy {
         object : BackendApi {
             override suspend fun sendCommand(command: CommandRequest): Response<ResponseBody> {
-                Log.i("API_BASE", "Using external base for /command")
-                return externalApi.sendCommand(command)
+                return callWithFallback(
+                    endpoint = "/command",
+                    externalCall = { sendCommand(command) },
+                    localCall = { sendCommand(command) }
+                )
             }
 
             override suspend fun getPendingActions(deviceId: String, limit: Int?, offset: Int?): PendingActionsResponse {
-                Log.i("API_BASE", "Using external base for /pending-actions")
-                return externalApi.getPendingActions(deviceId, limit, offset)
+                return callWithFallback(
+                    endpoint = "/pending-actions",
+                    externalCall = { getPendingActions(deviceId, limit, offset) },
+                    localCall = { getPendingActions(deviceId, limit, offset) }
+                )
             }
 
             override suspend fun ack(body: AckRequest) {
-                Log.i("API_BASE", "Using external base for /ack")
-                externalApi.ack(body)
+                callWithFallback(
+                    endpoint = "/ack",
+                    externalCall = { ack(body) },
+                    localCall = { ack(body) }
+                )
             }
 
             override suspend fun getTasks(deviceId: String, status: String?, limit: Int?, offset: Int?): TasksResponse {
-                Log.i("API_BASE", "Using external base for /tasks")
-                return externalApi.getTasks(deviceId, status, limit, offset)
+                return callWithFallback(
+                    endpoint = "/tasks",
+                    externalCall = { getTasks(deviceId, status, limit, offset) },
+                    localCall = { getTasks(deviceId, status, limit, offset) }
+                )
             }
 
             override suspend fun createTask(body: CreateTaskRequest): TaskItem {
-                Log.i("API_BASE", "Using external base for POST /tasks")
-                return externalApi.createTask(body)
+                return callWithFallback(
+                    endpoint = "POST /tasks",
+                    externalCall = { createTask(body) },
+                    localCall = { createTask(body) }
+                )
             }
 
             override suspend fun updateTask(id: Int, body: UpdateTaskRequest): TaskItem {
-                Log.i("API_BASE", "Using external base for PUT /tasks/$id")
-                return externalApi.updateTask(id, body)
+                return callWithFallback(
+                    endpoint = "PUT /tasks/$id",
+                    externalCall = { updateTask(id, body) },
+                    localCall = { updateTask(id, body) }
+                )
             }
 
             override suspend fun getWhatSaidRequests(deviceId: String, limit: Int?, offset: Int?): WhatSaidRequestsResponse {
-                Log.i("API_BASE", "Using external base for /what-said/requests")
-                return externalApi.getWhatSaidRequests(deviceId, limit, offset)
+                return callWithFallback(
+                    endpoint = "/what-said/requests",
+                    externalCall = { getWhatSaidRequests(deviceId, limit, offset) },
+                    localCall = { getWhatSaidRequests(deviceId, limit, offset) }
+                )
             }
         }
     }
