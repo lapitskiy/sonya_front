@@ -52,7 +52,7 @@ data class SonyaWatchUiState(
 class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     private val _ui = mutableStateOf(
         SonyaWatchUiState(
-            backendUrl = "http://192.168.0.50:18000/voice",
+            backendUrl = "http://188.243.119.154:443/voice",
             lastEvent = "Ожидаю подключения к часам…",
         )
     )

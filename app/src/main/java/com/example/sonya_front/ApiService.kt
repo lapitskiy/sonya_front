@@ -205,7 +205,7 @@ data class WhatSaidPendingAction(
 
 // 3. Объект для создания клиента Retrofit
 object ApiClient {
-    private const val EXTERNAL_BASE_URL = "http://188.243.119.154:18000/"
+    private const val EXTERNAL_BASE_URL = "http://188.243.119.154:443/"
 
     private val moshi = Moshi.Builder()
         .add(KotlinJsonAdapterFactory())
