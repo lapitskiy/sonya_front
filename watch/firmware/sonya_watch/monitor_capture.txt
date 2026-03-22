@@ -1,9 +1,10 @@
+hb no_uart_data_for=25s
+hb no_uart_data_for=26s
 hb no_uart_data_for=27s
 hb no_uart_data_for=28s
-hb no_uart_data_for=29s
-I (152018) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (152108) main: RX: BATT
-I (152108) main: TX BATT:pct=100,bmv=4155,vbus=0,chg=0,in=0,bat=1 (cmd)
+I (2372198) main: RX: BATT
+I (2372208) main: TX BATT:pct=100,bmv=4153,vbus=0,chg=0,in=0,bat=1 (cmd)
+I (2373518) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
 hb no_uart_data_for=2s
 hb no_uart_data_for=3s
 hb no_uart_data_for=4s
@@ -31,11 +32,10 @@ hb no_uart_data_for=25s
 hb no_uart_data_for=26s
 hb no_uart_data_for=27s
 hb no_uart_data_for=28s
-hb no_uart_data_for=29s
-I (181938) main: PWRMON: pct=100 bmv=4154 vbus=0 in=0 chg=0 bat=1 ble=1 rec=0 mic=0 dmv=-1 rate=0 mV/min
-I (182058) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (182118) main: RX: BATT
-I (182128) main: TX BATT:pct=100,bmv=4154,vbus=0,chg=0,in=0,bat=1 (cmd)
+I (2402218) main: RX: BATT
+I (2402218) main: TX BATT:pct=100,bmv=4153,vbus=0,chg=0,in=0,bat=1 (cmd)
+I (2403438) main: PWRMON: pct=100 bmv=4153 vbus=0 in=0 chg=0 bat=1 ble=1 rec=0 mic=0 dmv=0 rate=0 mV/min
+I (2403558) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
 hb no_uart_data_for=2s
 hb no_uart_data_for=3s
 hb no_uart_data_for=4s
@@ -63,10 +63,39 @@ hb no_uart_data_for=25s
 hb no_uart_data_for=26s
 hb no_uart_data_for=27s
 hb no_uart_data_for=28s
-hb no_uart_data_for=29s
-I (212058) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (212088) main: RX: BATT
-I (212098) main: TX BATT:pct=100,bmv=4155,vbus=0,chg=0,in=0,bat=1 (cmd)
+I (2432228) main: RX: BATT
+I (2432238) main: TX BATT:pct=100,bmv=4154,vbus=0,chg=0,in=0,bat=1 (cmd)
+I (2433558) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+hb no_uart_data_for=2s
+hb no_uart_data_for=3s
+hb no_uart_data_for=4s
+hb no_uart_data_for=5s
+hb no_uart_data_for=6s
+hb no_uart_data_for=7s
+hb no_uart_data_for=8s
+hb no_uart_data_for=9s
+hb no_uart_data_for=10s
+hb no_uart_data_for=11s
+hb no_uart_data_for=12s
+hb no_uart_data_for=13s
+hb no_uart_data_for=14s
+hb no_uart_data_for=15s
+hb no_uart_data_for=16s
+hb no_uart_data_for=17s
+hb no_uart_data_for=18s
+hb no_uart_data_for=19s
+hb no_uart_data_for=20s
+hb no_uart_data_for=21s
+hb no_uart_data_for=22s
+hb no_uart_data_for=23s
+hb no_uart_data_for=24s
+hb no_uart_data_for=25s
+hb no_uart_data_for=26s
+hb no_uart_data_for=27s
+I (2462248) main: RX: BATT
+I (2462248) main: TX BATT:pct=100,bmv=4153,vbus=0,chg=0,in=0,bat=1 (cmd)
+I (2463478) main: PWRMON: pct=100 bmv=4153 vbus=0 in=0 chg=0 bat=1 ble=1 rec=0 mic=0 dmv=0 rate=0 mV/min
+I (2463598) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
 hb no_uart_data_for=2s
 hb no_uart_data_for=3s
 hb no_uart_data_for=4s
@@ -94,11 +123,9 @@ hb no_uart_data_for=25s
 hb no_uart_data_for=26s
 hb no_uart_data_for=27s
 hb no_uart_data_for=28s
-hb no_uart_data_for=29s
-I (241978) main: PWRMON: pct=100 bmv=4154 vbus=0 in=0 chg=0 bat=1 ble=1 rec=0 mic=0 dmv=0 rate=0 mV/min
-I (242098) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (242108) main: RX: BATT
-I (242108) main: TX BATT:pct=100,bmv=4154,vbus=0,chg=0,in=0,bat=1 (cmd)
+I (2492218) main: RX: BATT
+I (2492218) main: TX BATT:pct=100,bmv=4153,vbus=0,chg=0,in=0,bat=1 (cmd)
+I (2493598) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
 hb no_uart_data_for=2s
 hb no_uart_data_for=3s
 hb no_uart_data_for=4s
@@ -126,10 +153,10 @@ hb no_uart_data_for=25s
 hb no_uart_data_for=26s
 hb no_uart_data_for=27s
 hb no_uart_data_for=28s
-hb no_uart_data_for=29s
-I (272098) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-I (272118) main: RX: BATT
-I (272128) main: TX BATT:pct=100,bmv=4155,vbus=0,chg=0,in=0,bat=1 (cmd)
+I (2522228) main: RX: BATT
+I (2522238) main: TX BATT:pct=100,bmv=4153,vbus=0,chg=0,in=0,bat=1 (cmd)
+I (2523518) main: PWRMON: pct=100 bmv=4153 vbus=0 in=0 chg=0 bat=1 ble=1 rec=0 mic=0 dmv=0 rate=0 mV/min
+I (2523638) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
 hb no_uart_data_for=2s
 hb no_uart_data_for=3s
 hb no_uart_data_for=4s
@@ -156,12 +183,9 @@ hb no_uart_data_for=24s
 hb no_uart_data_for=25s
 hb no_uart_data_for=26s
 hb no_uart_data_for=27s
-hb no_uart_data_for=28s
-hb no_uart_data_for=29s
-I (302018) main: PWRMON: pct=100 bmv=4154 vbus=0 in=0 chg=0 bat=1 ble=1 rec=0 mic=0 dmv=0 rate=0 mV/min
-I (302088) main: RX: BATT
-I (302098) main: TX BATT:pct=100,bmv=4154,vbus=4565,chg=0,in=1,bat=1 (cmd)
-I (302148) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
+I (2552198) main: RX: BATT
+I (2552208) main: TX BATT:pct=100,bmv=4153,vbus=0,chg=0,in=0,bat=1 (cmd)
+I (2553638) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
 hb no_uart_data_for=2s
 hb no_uart_data_for=3s
 hb no_uart_data_for=4s
@@ -174,27 +198,3 @@ hb no_uart_data_for=10s
 hb no_uart_data_for=11s
 hb no_uart_data_for=12s
 hb no_uart_data_for=13s
-hb no_uart_data_for=14s
-hb no_uart_data_for=15s
-hb no_uart_data_for=16s
-hb no_uart_data_for=17s
-hb no_uart_data_for=18s
-hb no_uart_data_for=19s
-hb no_uart_data_for=20s
-hb no_uart_data_for=21s
-hb no_uart_data_for=22s
-hb no_uart_data_for=23s
-hb no_uart_data_for=24s
-hb no_uart_data_for=25s
-hb no_uart_data_for=26s
-hb no_uart_data_for=27s
-hb no_uart_data_for=28s
-hb no_uart_data_for=29s
-I (332108) main: RX: BATT
-I (332108) main: TX BATT:pct=100,bmv=4155,vbus=0,chg=0,in=0,bat=1 (cmd)
-I (332148) wake: btn_hb: gpio0 lvl=1 armed=1 pending=0 isr_cnt=0
-hb no_uart_data_for=2s
-hb no_uart_data_for=3s
-hb no_uart_data_for=4s
-hb no_uart_data_for=5s
-hb no_uart_data_for=6s
