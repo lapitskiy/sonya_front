@@ -8,7 +8,7 @@ import com.example.sonya_front.AppLog as Log
 
 class PendingActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        AppLog.initialize(context.applicationContext)
+        Log.initialize(context.applicationContext)
         val action = intent.action ?: return
         val id = intent.getIntExtra(EXTRA_ACTION_ID, -1)
         if (id <= 0) return

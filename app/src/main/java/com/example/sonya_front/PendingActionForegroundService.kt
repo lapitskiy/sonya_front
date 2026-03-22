@@ -41,7 +41,7 @@ class PendingActionForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        AppLog.initialize(applicationContext)
+        Log.initialize(applicationContext)
         ensureChannel()
     }
 

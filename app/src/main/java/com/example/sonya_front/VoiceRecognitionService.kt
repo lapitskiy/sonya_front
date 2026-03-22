@@ -179,7 +179,7 @@ class VoiceRecognitionService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        AppLog.initialize(applicationContext)
+        Log.initialize(applicationContext)
         acquireWakeLock()
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
