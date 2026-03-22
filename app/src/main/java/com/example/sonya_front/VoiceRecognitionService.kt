@@ -757,13 +757,16 @@ class VoiceRecognitionService : Service() {
                     unresolvedNoAiConnection = tryScheduleDirectActionFromCommandResponse(resp, deviceId, originalText = text)
                 }
 
+                val finalResponseType = peekCommandResponseType(resp)
+
                 if (unresolvedNoAiConnection) {
                     broadcastStatusUpdate("Ошибка отправки: AI недоступен")
                     broadcastHint("AI недоступен (no_ai_connection). Повтор не помог.")
                 } else if (resp.isSuccessful) {
                     // Voice feedback: backend accepted the command ("поставилась в работу").
                     vibrateVoiceAck()
-                    speakOnMain("Всё ОК", queueMode = TextToSpeech.QUEUE_ADD)
+                    val spokenAck = if (isUnknownCommandType(finalResponseType)) "Не поняла" else "Всё ОК"
+                    speakOnMain(spokenAck, queueMode = TextToSpeech.QUEUE_ADD)
                     broadcastStatusUpdate("Команда отправлена")
                 } else {
                     broadcastStatusUpdate("Ошибка отправки: HTTP ${resp.code()}")
@@ -814,7 +817,7 @@ class VoiceRecognitionService : Service() {
             val time = parsed.time?.trim().orEmpty()
             val error = parsed.error?.trim().orEmpty()
             Log.i("API_CALL", "tryScheduleDirectAction parsed: id=${parsed.id} type='$type' time='$time' text='${parsed.text}' error='$error'")
-            if (type.lowercase() == "unknown" && error.lowercase() == "no_ai_connection") {
+            if (isUnknownCommandType(type) && error.lowercase() == "no_ai_connection") {
                 Log.w("API_CALL", "Direct response reports no_ai_connection")
                 return true
             }
@@ -922,6 +925,24 @@ class VoiceRecognitionService : Service() {
         val shifted = parsed.minusDays(1).toOffsetDateTime().toString()
         Log.i("API_CALL", "Night rule applied: 'завтра' before 06:00 -> today; $rawTime -> $shifted")
         return shifted
+    }
+
+    private fun isUnknownCommandType(type: String?): Boolean {
+        val normalized = type?.trim()?.lowercase().orEmpty()
+        return normalized == "unknown" || normalized == "unkown"
+    }
+
+    private fun peekCommandResponseType(
+        resp: retrofit2.Response<okhttp3.ResponseBody>
+    ): String? {
+        return try {
+            val rawBody = resp.raw().peekBody(64 * 1024).string().trim()
+            if (rawBody.isBlank() || rawBody == "null") return null
+            val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
+            moshi.adapter(CommandResponseAction::class.java).fromJson(rawBody)?.type
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     private fun maybeMirrorApproxAlarmToTasks(
