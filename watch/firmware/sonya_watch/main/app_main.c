@@ -806,10 +806,11 @@ void app_main(void)
         wake_suspend_ms(0);
         wake_suspend_ms(700);
 
-        // In non-continuous modes (e.g. BUTTON), stop mic pipeline right after recording
-        // to minimize idle power draw.
+        // Keep audio pipeline alive in BUTTON mode too: repeated stop/start on some boards
+        // leads to "channel not enabled" and zero-byte next recordings.
         if (wake_mode != WAKE_MODE_WWE &&
             wake_mode != WAKE_MODE_MULTI &&
+            wake_mode != WAKE_MODE_BUTTON &&
             s_audio_streaming) {
             audio_cap_stop();
             s_audio_streaming = false;

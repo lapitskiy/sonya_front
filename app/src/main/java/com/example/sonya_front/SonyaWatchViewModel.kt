@@ -624,7 +624,14 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
         val total = u32le(payload, 2)
         val crc = u32le(payload, 6).toLong() and 0xFFFF_FFFFL
         val sr = u16le(payload, 10)
-        if (total <= 0 || total > 10_000_000) return null
+        if (total <= 0) {
+            appendLog("rec meta invalid: recId=$recId total=$total crc=0x${crc.toString(16)} sr=$sr")
+            return null
+        }
+        if (total > 10_000_000) {
+            appendLog("rec meta too large: recId=$recId total=$total")
+            return null
+        }
         return RecMeta(recId = recId, totalBytes = total, crc32 = crc, sampleRate = sr)
     }
 
