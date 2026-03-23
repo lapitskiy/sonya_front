@@ -83,6 +83,8 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     private var pullBytesAtLastReport: Int = 0
     private var liveRecId: Int = -1
     private var lastBroadcastProgressPct: Int = -1
+    private var pendingDoneRecId: Int = -1
+    private var doneRetryJob: Job? = null
     @Volatile private var appVisible: Boolean = false
     private data class BattPoint(val atMs: Long, val mv: Int)
     private val battHistory = ArrayList<BattPoint>(16)
@@ -120,6 +122,9 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                     pendingOffset = 0
                     liveRecId = -1
                     lastBroadcastProgressPct = -1
+                    pendingDoneRecId = -1
+                    doneRetryJob?.cancel()
+                    doneRetryJob = null
                     pullTimeoutJob?.cancel()
                     pullTimeoutJob = null
                     _ui.value = _ui.value.copy(downloadTotalBytes = 0, downloadOffsetBytes = 0, bytesTotal = 0)
@@ -175,6 +180,9 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
         expectedSeq = null
         pendingMeta = null
         pendingOffset = 0
+        pendingDoneRecId = -1
+        doneRetryJob?.cancel()
+        doneRetryJob = null
         battHistory.clear()
         _ui.value = _ui.value.copy(downloadTotalBytes = 0, downloadOffsetBytes = 0, bytesTotal = 0)
     }
@@ -406,6 +414,24 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                     return
                 }
                 val isInfo = m == "PONG" || m.startsWith("REC_SEC=")
+                if (m.startsWith("DONE_OK:")) {
+                    val id = m.removePrefix("DONE_OK:").toIntOrNull()
+                    if (id != null && id == pendingDoneRecId) {
+                        appendLog("done ack: recId=$id")
+                        pendingDoneRecId = -1
+                        doneRetryJob?.cancel()
+                        doneRetryJob = null
+                    }
+                    return
+                }
+                if (m == "REC_BUSY:WAIT_DONE") {
+                    appendLog("watch busy: waiting DONE, retrying last DONE if needed")
+                    if (pendingDoneRecId > 0) {
+                        ble.writeAsciiCommand("DONE:$pendingDoneRecId")
+                    }
+                    setEvent("WATCH: $m")
+                    return
+                }
                 if (isInfo) {
                     appendLog("watch: '$m'")
                     setEvent("WATCH: $m")
@@ -506,7 +532,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun finalizeDone(m: RecMeta) {
-        ble.writeAsciiCommand("DONE:${m.recId}")
+        sendDoneWithRetry(m.recId)
         recording = false
         downloading = false
         expectedSeq = null
@@ -517,6 +543,23 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
         appendLog("rec done: pcmBytes=${pcmBytes.size} expected=${m.totalBytes}")
         broadcastStatus("Часы: данные получены, распознаю речь")
         saveWav(pcmBytes)
+    }
+
+    private fun sendDoneWithRetry(recId: Int) {
+        pendingDoneRecId = recId
+        doneRetryJob?.cancel()
+        ble.writeAsciiCommand("DONE:$recId")
+        doneRetryJob = viewModelScope.launch(Dispatchers.Main) {
+            repeat(5) { idx ->
+                delay(700L)
+                if (pendingDoneRecId != recId) return@launch
+                appendLog("done retry #${idx + 1}: recId=$recId")
+                ble.writeAsciiCommand("DONE:$recId")
+            }
+            if (pendingDoneRecId == recId) {
+                appendLog("done ack timeout: recId=$recId")
+            }
+        }
     }
 
     private fun reportThroughput(chunkSize: Int) {

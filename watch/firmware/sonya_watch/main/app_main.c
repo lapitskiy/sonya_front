@@ -38,6 +38,7 @@ static bool s_audio_initialized = false;
 static bool s_audio_streaming = false;
 static TickType_t s_last_pwrmon_tick = 0;
 static int s_last_pwrmon_bmv = -1;
+static TickType_t s_last_rec_end_tick = 0;
 
 static void send_batt_status(const char *reason)
 {
@@ -223,8 +224,14 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
         if (rec_id == rec_store_cur_id()) {
             pull_stream_handle_done(rec_id);
             status_ui_show_ok(900);
+            s_last_rec_end_tick = 0;
         } else {
             pull_stream_handle_done(rec_id);
+        }
+        if (sonya_ble_is_connected()) {
+            char msg[32];
+            snprintf(msg, sizeof(msg), "DONE_OK:%u", (unsigned)rec_id);
+            sonya_ble_send_evt_error(msg);
         }
         break;
     default:
@@ -651,6 +658,34 @@ void app_main(void)
             continue;
         }
 #endif
+        // Keep only one recording in rec_store at a time.
+        // If Android has not sent DONE for the previous record yet, do not overwrite it.
+        if (sonya_ble_is_connected() && rec_store_total_bytes() > 0) {
+            TickType_t now_tick = xTaskGetTickCount();
+            uint32_t age_ms = 0;
+            if (s_last_rec_end_tick != 0 && now_tick >= s_last_rec_end_tick) {
+                age_ms = (uint32_t)((now_tick - s_last_rec_end_tick) * portTICK_PERIOD_MS);
+            }
+            // If DONE was lost, do not stay locked forever. After grace period drop stale record.
+            if (age_ms >= 12000U) {
+                ESP_LOGW(TAG, "record stale pending dropped: age_ms=%lu bytes=%d id=%u",
+                         (unsigned long)age_ms, rec_store_total_bytes(), (unsigned)rec_store_cur_id());
+                rec_store_clear();
+                s_last_rec_end_tick = 0;
+            }
+        }
+
+        if (sonya_ble_is_connected() && rec_store_total_bytes() > 0) {
+            ESP_LOGW(TAG, "record blocked: previous record pending transfer (bytes=%d id=%u)",
+                     rec_store_total_bytes(), (unsigned)rec_store_cur_id());
+            sonya_ble_send_evt_error("REC_BUSY:WAIT_DONE");
+            status_ui_set_error(true);
+            status_ui_set_recording(false);
+            status_ui_show_message("WAIT", 800);
+            s_is_recording = false;
+            continue;
+        }
+
         if (sonya_ble_is_connected())
             sonya_ble_send_evt_wake();
 
@@ -745,9 +780,11 @@ void app_main(void)
                      (unsigned)rec_store_cur_id(), rec_store_total_bytes());
             sonya_diaglog_addf("rec", "end id=%u bytes=%d ble=1",
                                (unsigned)rec_store_cur_id(), rec_store_total_bytes());
+            s_last_rec_end_tick = xTaskGetTickCount();
         } else {
             ESP_LOGI(TAG, "recorded %d bytes (no BLE, dropped)", rec_store_total_bytes());
             sonya_diaglog_addf("rec", "end bytes=%d ble=0", rec_store_total_bytes());
+            s_last_rec_end_tick = 0;
         }
 
         // Clear long suspend immediately after finishing a recording.
@@ -755,11 +792,10 @@ void app_main(void)
         wake_suspend_ms(0);
         wake_suspend_ms(700);
 
-        // Keep audio pipeline alive in BUTTON mode too: repeated stop/start on some boards
-        // leads to "channel not enabled" and the next press records 0 bytes.
+        // In non-continuous modes (e.g. BUTTON), stop mic pipeline right after recording
+        // to minimize idle power draw.
         if (wake_mode != WAKE_MODE_WWE &&
             wake_mode != WAKE_MODE_MULTI &&
-            wake_mode != WAKE_MODE_BUTTON &&
             s_audio_streaming) {
             audio_cap_stop();
             s_audio_streaming = false;
