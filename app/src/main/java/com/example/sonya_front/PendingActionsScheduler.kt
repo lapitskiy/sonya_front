@@ -30,6 +30,7 @@ object PendingActionsScheduler {
     private const val SNOOZE_15M_MS = 15 * 60 * 1000L
     private const val SNOOZE_60M_MS = 60 * 60 * 1000L
     private const val SNOOZE_180M_MS = 180 * 60 * 1000L
+    private const val SNOOZE_24H_MS = 24 * 60 * 60 * 1000L
     /**
      * Re-renders ongoing countdown notifications for active timers.
      * (Needed because NotificationManager won't update remaining time automatically.)
@@ -443,6 +444,21 @@ object PendingActionsScheduler {
             label = label,
             minutes = 180,
             offsetMs = SNOOZE_180M_MS,
+        )
+    }
+
+    /**
+     * Snooze a ringing timer/alarm by +24 hours.
+     */
+    fun snooze24h(context: Context, deviceId: String, actionId: Int, type: String, label: String): Boolean {
+        return snoozeImpl(
+            context = context,
+            deviceId = deviceId,
+            actionId = actionId,
+            type = type,
+            label = label,
+            minutes = 24 * 60,
+            offsetMs = SNOOZE_24H_MS,
         )
     }
 

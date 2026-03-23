@@ -54,6 +54,7 @@ class PendingActionForegroundService : Service() {
             action != ACTION_SNOOZE_15 &&
             action != ACTION_SNOOZE_60 &&
             action != ACTION_SNOOZE_180 &&
+            action != ACTION_SNOOZE_24H &&
             action != ACTION_STOP
         ) {
             stopSelf()
@@ -296,6 +297,44 @@ class PendingActionForegroundService : Service() {
             return START_NOT_STICKY
         }
 
+        if (action == ACTION_SNOOZE_24H) {
+            stopPlayback()
+            cancelNotification(id)
+
+            val ok = PendingActionsScheduler.snooze24h(
+                context = applicationContext,
+                deviceId = deviceId,
+                actionId = id,
+                type = type,
+                label = (ttsText ?: "").ifBlank { "Событие" },
+            )
+
+            if (deviceId.isNotBlank() && id > 0) {
+                serviceScope.launch {
+                    try {
+                        ApiClient.instance.ack(
+                            AckRequest(
+                                deviceId = deviceId,
+                                actionId = id,
+                                status = "scheduled",
+                                ack = mapOf(
+                                    "reason" to "snoozed_24h",
+                                    "source" to "android_foreground_service",
+                                    "snoozed_ok" to ok.toString(),
+                                    "snoozed_at" to Instant.now().toString(),
+                                )
+                            )
+                        )
+                    } catch (t: Throwable) {
+                        Log.w("ACK", "Failed to ack snooze24h action_id=$id: ${t.message}")
+                    }
+                }
+            }
+
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         val title = when (type.lowercase()) {
             "timer" -> "Таймер"
             "text-timer" -> "Напоминание"
@@ -473,6 +512,20 @@ class PendingActionForegroundService : Service() {
             (PendingIntent.FLAG_UPDATE_CURRENT) or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
         )
 
+        val snooze24hIntent = Intent(this, PendingActionForegroundService::class.java).apply {
+            action = ACTION_SNOOZE_24H
+            putExtra(PendingActionReceiver.EXTRA_DEVICE_ID, deviceId)
+            putExtra(PendingActionReceiver.EXTRA_ACTION_ID, actionId)
+            putExtra(PendingActionReceiver.EXTRA_TYPE, type)
+            putExtra(PendingActionReceiver.EXTRA_TTS, ttsText)
+        }
+        val snooze24hPi = PendingIntent.getService(
+            this,
+            actionId + 4,
+            snooze24hIntent,
+            (PendingIntent.FLAG_UPDATE_CURRENT) or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+        )
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             // Avoid adaptive mipmap launcher (XML) here: some OEM SystemUI fails to decode it.
@@ -487,6 +540,7 @@ class PendingActionForegroundService : Service() {
             .addAction(android.R.drawable.ic_lock_idle_alarm, "+15", snoozePi)
             .addAction(android.R.drawable.ic_lock_idle_alarm, "+60", snooze60Pi)
             .addAction(android.R.drawable.ic_lock_idle_alarm, "+180", snooze180Pi)
+            .addAction(android.R.drawable.ic_lock_idle_alarm, "+день", snooze24hPi)
             .build()
     }
 
@@ -598,6 +652,7 @@ class PendingActionForegroundService : Service() {
         const val ACTION_SNOOZE_15 = "com.example.sonya_front.PENDING_ACTION_SNOOZE_15"
         const val ACTION_SNOOZE_60 = "com.example.sonya_front.PENDING_ACTION_SNOOZE_60"
         const val ACTION_SNOOZE_180 = "com.example.sonya_front.PENDING_ACTION_SNOOZE_180"
+        const val ACTION_SNOOZE_24H = "com.example.sonya_front.PENDING_ACTION_SNOOZE_24H"
     }
 }
 
