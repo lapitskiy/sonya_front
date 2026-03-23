@@ -467,10 +467,15 @@ int wake_init(wake_mode_t mode)
 bool wake_poll_or_wait(uint32_t timeout_ms)
 {
     if (is_suspended_now()) {
+        TickType_t now = xTaskGetTickCount();
+        TickType_t remain = (s_suspend_until_tick > now) ? (s_suspend_until_tick - now) : 0;
+        if (remain > 0) {
+            ESP_LOGI(TAG, "wake skip: suspended remain_ms=%lu armed=%d pending=%d src=%d",
+                     (unsigned long)(remain * portTICK_PERIOD_MS),
+                     s_button_armed ? 1 : 0, s_wake_pending ? 1 : 0, (int)s_last_src);
+        }
         s_wake_pending = false;
         if (timeout_ms > 0) {
-            TickType_t now = xTaskGetTickCount();
-            TickType_t remain = (s_suspend_until_tick > now) ? (s_suspend_until_tick - now) : 0;
             TickType_t max_wait = pdMS_TO_TICKS(timeout_ms);
             TickType_t wait = (remain > 0 && remain < max_wait) ? remain : max_wait;
             if (wait > 0) vTaskDelay(wait);
@@ -495,7 +500,10 @@ bool wake_poll_or_wait(uint32_t timeout_ms)
         s_wake_pending = false;
         /* In MULTI mode, button re-arm should NOT block WWE/CMD triggers. */
         if ((s_mode == WAKE_MODE_BUTTON || s_mode == WAKE_MODE_MULTI) && !s_button_armed) {
-            if (s_last_src == WAKE_SRC_BUTTON) return false;
+            if (s_last_src == WAKE_SRC_BUTTON) {
+                ESP_LOGW(TAG, "wake pending dropped: src=BUTTON but not armed");
+                return false;
+            }
             ESP_LOGW(TAG, "wake pending (%d) while button not armed -> allow (non-button src)",
                      (int)s_last_src);
         }

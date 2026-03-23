@@ -263,10 +263,12 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
 
         when (f.type) {
             SonyaWatchProtocol.EVT_WAKE -> {
+                appendLog("wake: rec=$recording dl=$downloading pendingMeta=${pendingMeta?.recId ?: -1} off=$pendingOffset")
                 setEvent("$typeName seq=${f.seq}")
             }
 
             SonyaWatchProtocol.EVT_REC_START -> {
+                appendLog("rec_start: before rec=$recording dl=$downloading pendingMeta=${pendingMeta?.recId ?: -1} off=$pendingOffset liveRecId=$liveRecId")
                 recording = true
                 downloading = false
                 expectedSeq = (f.seq + 1) and 0xFFFF
@@ -532,6 +534,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun finalizeDone(m: RecMeta) {
+        appendLog("finalize: recId=${m.recId} expected=${m.totalBytes} got=${pcm.size()} off=$pendingOffset")
         sendDoneWithRetry(m.recId)
         recording = false
         downloading = false
@@ -588,6 +591,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
         val want = minOf(pullWindowBytes, remaining)
         pendingWindowEndOffset = fromOffset + want
         lastGetSentAtMs = System.currentTimeMillis()
+        appendLog("GET -> recId=${m.recId} off=$fromOffset len=$want winEnd=$pendingWindowEndOffset total=${m.totalBytes}")
         ble.writeAsciiCommand("GET:${m.recId}:$fromOffset:$want")
         schedulePullTimeout()
     }

@@ -185,17 +185,30 @@ void pull_stream_handle_get(uint16_t rec_id, uint32_t off, uint16_t want_len)
     ESP_LOGI(TAG, "RX: GET rec_id=%u off=%lu want_len=%u",
              (unsigned)rec_id, (unsigned long)off, (unsigned)want_len);
 
-    if (rec_id != rec_store_cur_id() || rec_store_total_bytes() <= 0) {
+    int total = rec_store_total_bytes();
+    uint16_t cur_id = rec_store_cur_id();
+    if (rec_id != cur_id || total <= 0) {
+        ESP_LOGW(TAG, "GET reject: NO_REC req_id=%u cur_id=%u total=%d",
+                 (unsigned)rec_id, (unsigned)cur_id, total);
         sonya_ble_send_evt_error("NO_REC");
         return;
     }
-    if (off >= (uint32_t)rec_store_total_bytes()) {
+    if (off >= (uint32_t)total) {
+        ESP_LOGW(TAG, "GET reject: EOF req_off=%lu total=%d id=%u",
+                 (unsigned long)off, total, (unsigned)cur_id);
         sonya_ble_send_evt_error("EOF");
         return;
     }
     get_req_t req = { .rec_id = rec_id, .off = off, .want_len = want_len };
     xQueueReset(s_queue);
-    xQueueSend(s_queue, &req, 0);
+    if (xQueueSend(s_queue, &req, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "GET enqueue failed: id=%u off=%lu len=%u",
+                 (unsigned)rec_id, (unsigned long)off, (unsigned)want_len);
+        sonya_ble_send_evt_error("GET_Q_FULL");
+        return;
+    }
+    ESP_LOGI(TAG, "GET enqueued: id=%u off=%lu len=%u total=%d",
+             (unsigned)rec_id, (unsigned long)off, (unsigned)want_len, total);
 }
 
 void pull_stream_handle_done(uint16_t rec_id)

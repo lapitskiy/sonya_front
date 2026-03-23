@@ -603,12 +603,19 @@ void app_main(void)
         bool trig = wake_poll_or_wait(100);
         if (!trig) continue;
         TickType_t now = xTaskGetTickCount();
+        int pending_bytes = rec_store_total_bytes();
+        uint16_t pending_id = rec_store_cur_id();
 #if defined(CONFIG_WAKE_MODE_BUTTON) || defined(CONFIG_WAKE_MODE_MULTI)
-        ESP_LOGI(TAG, "wake trig: ticks=%lu ble=%d gpio=%d",
+        ESP_LOGI(TAG, "wake trig: ticks=%lu ble=%d gpio=%d rec=%d audio=%d pending_bytes=%d pending_id=%u",
                  (unsigned long)now, sonya_ble_is_connected() ? 1 : 0,
-                 gpio_get_level(CONFIG_WAKE_BUTTON_GPIO));
+                 gpio_get_level(CONFIG_WAKE_BUTTON_GPIO),
+                 s_is_recording ? 1 : 0, s_audio_streaming ? 1 : 0,
+                 pending_bytes, (unsigned)pending_id);
 #else
-        ESP_LOGI(TAG, "wake trig: ticks=%lu ble=%d", (unsigned long)now, sonya_ble_is_connected() ? 1 : 0);
+        ESP_LOGI(TAG, "wake trig: ticks=%lu ble=%d rec=%d audio=%d pending_bytes=%d pending_id=%u",
+                 (unsigned long)now, sonya_ble_is_connected() ? 1 : 0,
+                 s_is_recording ? 1 : 0, s_audio_streaming ? 1 : 0,
+                 pending_bytes, (unsigned)pending_id);
 #endif
         if (now < boot_ready) {
             ESP_LOGI(TAG, "wake ignored: boot warmup");
@@ -713,6 +720,9 @@ void app_main(void)
         int want = cap_sec * sr * 2 + (int)((tail_ms * (uint32_t)sr * 2U) / 1000U);
 
         ESP_LOGI(TAG, "REC_START cap=%d sec sr=%d want=%d", cap_sec, sr, want);
+        ESP_LOGI(TAG, "REC_FLOW start: ble=%d by_btn=%d pending_before=%d id_before=%u",
+                 sonya_ble_is_connected() ? 1 : 0, by_btn ? 1 : 0,
+                 rec_store_total_bytes(), (unsigned)rec_store_cur_id());
         sonya_diaglog_addf("rec", "start cap=%d sr=%d ble=%d",
                            cap_sec, sr, sonya_ble_is_connected() ? 1 : 0);
         ESP_LOGI(TAG, "ui: recording on (src_btn=%d)", by_btn ? 1 : 0);
@@ -771,6 +781,10 @@ void app_main(void)
 
         pull_stream_stop_live();
         rec_store_commit();
+        ESP_LOGI(TAG, "REC_FLOW commit: id=%u bytes=%d crc=0x%08lx",
+                 (unsigned)rec_store_cur_id(),
+                 rec_store_total_bytes(),
+                 (unsigned long)rec_store_crc32());
 
         status_ui_set_recording(false);
 
