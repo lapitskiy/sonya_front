@@ -27,8 +27,20 @@ object IngestedTasksStore {
 }
 
 object TasksIngestor {
+    private fun normalizeType(raw: String?): String {
+        return raw?.trim()?.lowercase().orEmpty()
+    }
+
+    private fun mapRequestTypeToTaskType(raw: String?): String? {
+        return when (normalizeType(raw)) {
+            "task", "todo", "to-do", "задание", "задача" -> "task"
+            "geo", "geotask", "geo-task", "geo_task", "location", "place", "место" -> "geo"
+            else -> null
+        }
+    }
+
     /**
-     * Ingests plain tasks (type="task") from requests history into backend /tasks.
+     * Ingests plain and geo tasks from requests history into backend /tasks.
      * Returns number of tasks added.
      */
     suspend fun ingestFromRequests(ctx: Context, deviceId: String, items: List<WhatSaidRequestItem>): Int {
@@ -40,11 +52,12 @@ object TasksIngestor {
             val reqId = it.id ?: continue
             if (IngestedTasksStore.isIngested(appCtx, reqId)) continue
 
-            val type = (it.pendingAction?.type)
+            val rawType = (it.pendingAction?.type)
                 ?: (it.payload?.intent?.get("type") as? String)
                 ?: (it.payload?.nlu?.get("type") as? String)
+            val taskType = mapRequestTypeToTaskType(rawType)
 
-            if (type?.lowercase() != "task") {
+            if (taskType == null) {
                 // Mark as ingested anyway so we don't scan it again and again.
                 IngestedTasksStore.markIngested(appCtx, reqId)
                 continue
@@ -64,7 +77,7 @@ object TasksIngestor {
                         text = desc,
                         urgent = urgent,
                         important = important,
-                        type = "task",
+                        type = taskType,
                     )
                 )
                 IngestedTasksStore.markIngested(appCtx, reqId)

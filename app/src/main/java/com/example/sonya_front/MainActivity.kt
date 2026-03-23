@@ -508,6 +508,28 @@ private enum class RequestFilter(val label: String) {
     ALL("Все")
 }
 
+private fun normalizedTaskType(raw: String?): String {
+    return raw?.trim()?.lowercase().orEmpty()
+}
+
+private fun isGeoTaskType(raw: String?): Boolean {
+    return normalizedTaskType(raw) in setOf(
+        "geo",
+        "geotask",
+        "geo-task",
+        "geo_task",
+        "location",
+        "place",
+        "место",
+    )
+}
+
+private fun isPlainTaskType(raw: String?): Boolean {
+    val type = normalizedTaskType(raw)
+    if (type.isBlank()) return true
+    return type in setOf("task", "todo", "to-do", "задание", "задача")
+}
+
 @Composable
 private fun ProfileScreen(
     deviceId: String,
@@ -653,6 +675,7 @@ private fun TasksScreen(
     onMessage: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val ctx = LocalContext.current
     val loading = viewModel.tasksLoading.value
     val err = viewModel.tasksError.value
 
@@ -667,9 +690,9 @@ private fun TasksScreen(
     var editingText by remember { mutableStateOf("") }
 
     val items = when (tasksTab) {
-        1 -> viewModel.tasksActive.value.filter { it.type?.trim()?.lowercase() == "geo" }
+        1 -> viewModel.tasksActive.value.filter { isGeoTaskType(it.type) }
         2 -> viewModel.tasksDone.value
-        else -> viewModel.tasksActive.value.filter { it.type?.trim()?.lowercase() == "task" }
+        else -> viewModel.tasksActive.value.filter { isPlainTaskType(it.type) }
     }
 
     LaunchedEffect(tasksTab, viewModel.tasksActive.value, viewModel.tasksDone.value) {
@@ -677,9 +700,9 @@ private fun TasksScreen(
         for (t in src) {
             val ty = t.type?.trim()?.lowercase()
             val visible = when (tasksTab) {
-                1 -> ty == "geo"
+                1 -> isGeoTaskType(ty)
                 2 -> true
-                else -> ty == "task"
+                else -> isPlainTaskType(ty)
             }
             Log.d(
                 "UI_TASKS_FILTER",
@@ -690,6 +713,13 @@ private fun TasksScreen(
 
     LaunchedEffect(deviceId, tasksTab) {
         if (deviceId.isBlank()) return@LaunchedEffect
+        if (tasksTab != 2) {
+            viewModel.loadRequests(deviceId)
+            val added = TasksIngestor.ingestFromRequests(ctx, deviceId, viewModel.requests.value)
+            if (added > 0) {
+                Log.i("TASKS_UI", "Ingested tasks from requests: +$added")
+            }
+        }
         val status = if (tasksTab == 2) "done" else "active"
         viewModel.loadTasks(deviceId, status)
     }
