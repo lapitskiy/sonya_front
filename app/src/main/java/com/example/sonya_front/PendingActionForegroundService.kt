@@ -539,7 +539,6 @@ class PendingActionForegroundService : Service() {
             .addAction(android.R.drawable.ic_menu_save, "Выполнено", donePi)
             .addAction(android.R.drawable.ic_lock_idle_alarm, "+15", snoozePi)
             .addAction(android.R.drawable.ic_lock_idle_alarm, "+60", snooze60Pi)
-            .addAction(android.R.drawable.ic_lock_idle_alarm, "+180", snooze180Pi)
             .addAction(android.R.drawable.ic_lock_idle_alarm, "+день", snooze24hPi)
             .build()
     }

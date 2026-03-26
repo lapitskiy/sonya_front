@@ -48,6 +48,8 @@ import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -77,6 +79,8 @@ class VoiceRecognitionService : Service() {
     @Volatile private var lastLocAtMs: Long = 0L
     private var locationCallback: LocationCallback? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var offlineRetryJob: Job? = null
+    private val offlineRetryIntervalMs = 5 * 60 * 1000L
 
     // --- Новая логика "сшивания" фраз ---
     private val combinedTextBuilder = StringBuilder()
@@ -245,8 +249,10 @@ class VoiceRecognitionService : Service() {
         // Initial pull to schedule any pending actions (e.g., after app restart).
         val deviceId = "android-" + Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
         serviceScope.launch {
+            flushOfflineCommandCache(deviceId, reason = "service_start")
             PendingActionsSync.syncNow(applicationContext, deviceId, reason = "service_start")
         }
+        startOfflineRetryLoop()
     }
 
     private fun setupRecognizers() {
@@ -648,6 +654,7 @@ class VoiceRecognitionService : Service() {
 
                     val deviceId = "android-" + Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
                     serviceScope.launch {
+                        flushOfflineCommandCache(deviceId, reason = "network_available")
                         PendingActionsSync.syncNow(applicationContext, deviceId, reason = "network_available")
                     }
                 }
@@ -672,14 +679,87 @@ class VoiceRecognitionService : Service() {
         }
     }
 
+    private fun startOfflineRetryLoop() {
+        offlineRetryJob?.cancel()
+        offlineRetryJob = serviceScope.launch {
+            while (true) {
+                try {
+                    val deviceId = "android-" + Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
+                    flushOfflineCommandCache(deviceId, reason = "periodic_5m")
+                } catch (t: Throwable) {
+                    Log.w("OFFLINE_CACHE", "Periodic retry failed: ${t.message}")
+                }
+                delay(offlineRetryIntervalMs)
+            }
+        }
+    }
+
+    private suspend fun flushOfflineCommandCache(deviceId: String, reason: String) {
+        if (deviceId.isBlank()) return
+        val items = OfflineCommandCacheStore.listOldestFirst(applicationContext, deviceId, limit = 30)
+        if (items.isEmpty()) return
+        Log.i("OFFLINE_CACHE", "Flush start reason=$reason count=${items.size}")
+        for (item in items) {
+            val req = CommandRequest(
+                deviceId = item.deviceId,
+                text = item.text,
+                lat = item.lat,
+                lon = item.lon,
+                deviceTime = item.deviceTime,
+            )
+            try {
+                var resp = ApiClient.instance.sendCommand(req)
+                var unresolvedNoAiConnection = false
+                val shouldRetryNoAiConnection = tryScheduleDirectActionFromCommandResponse(resp, deviceId, originalText = item.text)
+                if (shouldRetryNoAiConnection) {
+                    resp = ApiClient.instance.sendCommand(req)
+                    unresolvedNoAiConnection = tryScheduleDirectActionFromCommandResponse(resp, deviceId, originalText = item.text)
+                }
+                if (unresolvedNoAiConnection) {
+                    OfflineCommandCacheStore.markAttemptFailed(applicationContext, item.id, "AI недоступен (no_ai_connection)")
+                    continue
+                }
+                if (resp.isSuccessful) {
+                    OfflineCommandCacheStore.markSent(applicationContext, item.id)
+                    PendingActionsSync.syncNow(applicationContext, deviceId, reason = "offline_cache:$reason")
+                } else {
+                    OfflineCommandCacheStore.markAttemptFailed(
+                        applicationContext,
+                        item.id,
+                        "HTTP ${resp.code()}",
+                    )
+                }
+            } catch (e: IOException) {
+                OfflineCommandCacheStore.markAttemptFailed(
+                    applicationContext,
+                    item.id,
+                    e.message ?: "Ошибка сети",
+                )
+                return
+            } catch (e: HttpException) {
+                OfflineCommandCacheStore.markAttemptFailed(
+                    applicationContext,
+                    item.id,
+                    "HTTP ${e.code()}",
+                )
+            } catch (t: Throwable) {
+                OfflineCommandCacheStore.markAttemptFailed(
+                    applicationContext,
+                    item.id,
+                    t.message ?: "Ошибка отправки",
+                )
+            }
+        }
+    }
+
     @SuppressLint("HardwareIds")
-    private fun sendToServer(text: String) {
+    private fun sendToServer(text: String, source: String) {
         // Проверяем разрешение на геолокацию
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
             ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             Log.w("API_CALL", "Location permission not granted. Sending command without location.")
             // Отправляем без координат, если нет разрешения
-            sendRequest(text, null, null)
+            sendRequest(text, null, null, source)
             return
         }
 
@@ -691,7 +771,7 @@ class VoiceRecognitionService : Service() {
             val ageMs = now - lastLocAtMs
             if (lat != null && lon != null && ageMs in 0..(3 * 60_000L)) {
                 Log.d("API_CALL", "Using cached location (ageMs=$ageMs): Lat $lat, Lon $lon")
-                sendRequest(text, lat, lon)
+                sendRequest(text, lat, lon, source)
                 return
             }
         }
@@ -704,7 +784,7 @@ class VoiceRecognitionService : Service() {
                     if (location.isFromMockProvider) {
                         Log.w("API_CALL", "Mock location detected. Sending command without location.")
                         broadcastHint("Обнаружена фиктивная геолокация — отправляю без координат.")
-                        sendRequest(text, null, null)
+                        sendRequest(text, null, null, source)
                         return@addOnSuccessListener
                     }
 
@@ -714,20 +794,20 @@ class VoiceRecognitionService : Service() {
                     }
 
                     Log.d("API_CALL", "Location acquired: Lat ${location.latitude}, Lon ${location.longitude}")
-                    sendRequest(text, location.latitude, location.longitude)
+                    sendRequest(text, location.latitude, location.longitude, source)
                 } else {
                     Log.w("API_CALL", "Location is null. Sending command without location.")
-                    sendRequest(text, null, null)
+                    sendRequest(text, null, null, source)
                 }
             }
             .addOnFailureListener { e ->
                 Log.e("API_CALL", "Failed to get location", e)
-                sendRequest(text, null, null)
+                sendRequest(text, null, null, source)
             }
     }
 
     @SuppressLint("HardwareIds")
-    private fun sendRequest(text: String, lat: Double?, lon: Double?) {
+    private fun sendRequest(text: String, lat: Double?, lon: Double?, source: String) {
         val deviceId = "android-" + Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
 
         // Форматируем время в ISO 8601 с таймзоной
@@ -780,7 +860,13 @@ class VoiceRecognitionService : Service() {
                 broadcastStatusUpdate("Ошибка отправки: HTTP ${e.code()}")
             } catch (e: IOException) {
                 Log.e("API_CALL_ERROR", "Network error while sending command. request=$request", e)
+                OfflineCommandCacheStore.enqueue(
+                    applicationContext,
+                    request = request,
+                    source = source,
+                )
                 broadcastStatusUpdate("Ошибка сети при отправке")
+                broadcastHint("Нет интернета. Команда сохранена в Кеш.")
             } catch (e: Exception) {
                 Log.e("API_CALL_ERROR", "Unexpected error while sending command. request=$request", e)
                 broadcastStatusUpdate("Ошибка отправки команды")
@@ -1060,6 +1146,8 @@ class VoiceRecognitionService : Service() {
 
     override fun onDestroy() {
         serviceScope.cancel()
+        offlineRetryJob?.cancel()
+        offlineRetryJob = null
         cancelFinalize()
         mainHandler.removeCallbacks(wakeWordWatchdog)
         releaseWakeLock()
@@ -1361,7 +1449,7 @@ class VoiceRecognitionService : Service() {
         broadcastStatusUpdate("Отправляю команду на сервер…")
 
         // Backend + "Всё ОК" confirm + sync happen inside sendRequest()/PendingActionsSync.
-        sendToServer(t)
+        sendToServer(t, source)
     }
 
     private fun enqueuePendingTts(text: String, queueMode: Int) {

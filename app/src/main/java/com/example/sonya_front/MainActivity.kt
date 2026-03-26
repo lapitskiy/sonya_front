@@ -540,6 +540,7 @@ private fun ProfileScreen(
 ) {
     var showSettings by remember { mutableStateOf(false) }
     var showRequests by remember { mutableStateOf(false) }
+    var showCache by remember { mutableStateOf(false) }
 
     if (showSettings) {
         SettingsScreen(
@@ -566,6 +567,20 @@ private fun ProfileScreen(
         return
     }
 
+    if (showCache) {
+        Column(modifier = modifier.fillMaxSize()) {
+            IconButton(onClick = { showCache = false }, modifier = Modifier.padding(start = 4.dp)) {
+                androidx.compose.material3.Icon(Icons.Filled.ArrowBack, contentDescription = "Назад")
+            }
+            CacheScreen(
+                deviceId = deviceId,
+                viewModel = viewModel,
+                modifier = Modifier.weight(1f)
+            )
+        }
+        return
+    }
+
     Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
         Text("Профиль", fontSize = 22.sp)
         Text("device_id: $deviceId", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(top = 6.dp))
@@ -584,6 +599,15 @@ private fun ProfileScreen(
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text("Настройки", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
             Button(onClick = { showSettings = true }) {
+                Text("Открыть", fontSize = 12.sp)
+            }
+        }
+
+        Divider(modifier = Modifier.padding(vertical = 12.dp))
+
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text("Кеш", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            Button(onClick = { showCache = true }) {
                 Text("Открыть", fontSize = 12.sp)
             }
         }
@@ -1448,6 +1472,79 @@ private fun RequestsScreen(
                         ) {
                             Text("Отменить", fontSize = 12.sp)
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CacheScreen(
+    deviceId: String,
+    viewModel: MainViewModel,
+    modifier: Modifier = Modifier,
+) {
+    val ctx = LocalContext.current
+    val loading = viewModel.offlineCacheLoading.value
+    val err = viewModel.offlineCacheError.value
+    val items = viewModel.offlineCache.value
+
+    LaunchedEffect(deviceId) {
+        if (deviceId.isNotBlank()) viewModel.loadOfflineCache(deviceId = deviceId, context = ctx)
+    }
+
+    Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Кеш", fontSize = 22.sp)
+            Box(modifier = Modifier.weight(1f))
+            Button(onClick = { viewModel.loadOfflineCacheAsync(ctx, deviceId) }) {
+                Text("Обновить")
+            }
+        }
+
+        if (loading) {
+            Text("Загрузка...", modifier = Modifier.padding(top = 12.dp))
+        }
+        if (!err.isNullOrBlank()) {
+            Text("Ошибка: $err", modifier = Modifier.padding(top = 12.dp))
+        }
+        if (!loading && err.isNullOrBlank() && items.isEmpty()) {
+            Text("Кеш пуст.", modifier = Modifier.padding(top = 12.dp))
+        }
+
+        androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.padding(top = 12.dp)) {
+            items(items.size) { idx ->
+                val it = items[idx]
+                Column(modifier = Modifier.padding(vertical = 10.dp)) {
+                    Text(it.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "создано: ${formatEpochMsRu(it.createdAtEpochMs)}",
+                        fontSize = 12.sp,
+                        color = Color.Gray,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                    Text(
+                        "источник: ${it.source}  •  попыток: ${it.attemptCount}",
+                        fontSize = 12.sp,
+                        color = Color.Gray,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                    if (it.lastTryAtEpochMs != null) {
+                        Text(
+                            "последняя попытка: ${formatEpochMsRu(it.lastTryAtEpochMs)}",
+                            fontSize = 12.sp,
+                            color = Color.Gray,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                    if (!it.lastError.isNullOrBlank()) {
+                        Text(
+                            "ошибка: ${it.lastError}",
+                            fontSize = 12.sp,
+                            color = Color(0xFFE57373),
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
                     }
                 }
             }

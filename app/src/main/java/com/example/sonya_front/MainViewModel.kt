@@ -43,6 +43,13 @@ class MainViewModel : ViewModel() {
     private val _tasksError = mutableStateOf<String?>(null)
     val tasksError: State<String?> = _tasksError
 
+    private val _offlineCache = mutableStateOf<List<OfflineCommandCacheItem>>(emptyList())
+    val offlineCache: State<List<OfflineCommandCacheItem>> = _offlineCache
+    private val _offlineCacheLoading = mutableStateOf(false)
+    val offlineCacheLoading: State<Boolean> = _offlineCacheLoading
+    private val _offlineCacheError = mutableStateOf<String?>(null)
+    val offlineCacheError: State<String?> = _offlineCacheError
+
     fun onNewRecognitionResult(text: String) {
         _recognizedText.value = text
     }
@@ -182,6 +189,28 @@ class MainViewModel : ViewModel() {
     fun loadRequestsAsync(deviceId: String) {
         viewModelScope.launch {
             loadRequests(deviceId)
+        }
+    }
+
+    fun loadOfflineCacheAsync(context: Context, deviceId: String) {
+        viewModelScope.launch {
+            loadOfflineCache(context, deviceId)
+        }
+    }
+
+    suspend fun loadOfflineCache(context: Context, deviceId: String) {
+        if (deviceId.isBlank()) return
+        _offlineCacheLoading.value = true
+        _offlineCacheError.value = null
+        try {
+            val items = withContext(Dispatchers.IO) {
+                OfflineCommandCacheStore.list(context.applicationContext, deviceId)
+            }
+            _offlineCache.value = items
+        } catch (t: Throwable) {
+            _offlineCacheError.value = t.message ?: "Ошибка загрузки кеша"
+        } finally {
+            _offlineCacheLoading.value = false
         }
     }
 }

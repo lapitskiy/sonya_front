@@ -85,7 +85,6 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     private var lastBroadcastProgressPct: Int = -1
     private var pendingDoneRecId: Int = -1
     private var doneRetryJob: Job? = null
-    @Volatile private var appVisible: Boolean = false
     private data class BattPoint(val atMs: Long, val mv: Int)
     private val battHistory = ArrayList<BattPoint>(16)
 
@@ -140,21 +139,21 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setAppVisible(visible: Boolean) {
-        appVisible = visible
+        // Keep BLE auto-connect independent from Activity visibility:
+        // watch commands should still be accepted while screen is off.
         applyAutoConnect()
     }
 
     fun setAutoConnectEnabled(enabled: Boolean) {
         _ui.value = _ui.value.copy(autoConnect = enabled)
         applyAutoConnect()
-        if (enabled && appVisible) {
+        if (enabled) {
             ble.kickAutoConnectNow()
         }
     }
 
     private fun applyAutoConnect() {
-        val enabled = appVisible && _ui.value.autoConnect
-        ble.setAutoConnectEnabled(enabled)
+        ble.setAutoConnectEnabled(_ui.value.autoConnect)
     }
 
     fun setBackendUrl(url: String) {
