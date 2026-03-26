@@ -80,6 +80,10 @@ object OfflineCommandCacheStore {
         }
     }
 
+    fun remove(ctx: Context, id: Long) {
+        markSent(ctx, id)
+    }
+
     fun markAttemptFailed(ctx: Context, id: Long, error: String?) {
         val appCtx = ctx.applicationContext
         val err = error?.trim()?.take(240) ?: "ошибка отправки"

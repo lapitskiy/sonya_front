@@ -213,4 +213,23 @@ class MainViewModel : ViewModel() {
             _offlineCacheLoading.value = false
         }
     }
+
+    fun removeOfflineCacheItemAsync(context: Context, deviceId: String, id: Long) {
+        viewModelScope.launch {
+            removeOfflineCacheItem(context, deviceId, id)
+        }
+    }
+
+    suspend fun removeOfflineCacheItem(context: Context, deviceId: String, id: Long) {
+        if (deviceId.isBlank() || id <= 0L) return
+        _offlineCacheError.value = null
+        try {
+            withContext(Dispatchers.IO) {
+                OfflineCommandCacheStore.remove(context.applicationContext, id)
+            }
+            _offlineCache.value = _offlineCache.value.filterNot { it.id == id }
+        } catch (t: Throwable) {
+            _offlineCacheError.value = t.message ?: "Ошибка удаления из кеша"
+        }
+    }
 }

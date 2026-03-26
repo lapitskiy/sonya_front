@@ -1546,6 +1546,16 @@ private fun CacheScreen(
                             modifier = Modifier.padding(top = 2.dp)
                         )
                     }
+                    Button(
+                        onClick = { viewModel.removeOfflineCacheItemAsync(ctx, deviceId, it.id) },
+                        modifier = Modifier.padding(top = 8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF616161),
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Text("Отменить", fontSize = 12.sp)
+                    }
                 }
             }
         }
