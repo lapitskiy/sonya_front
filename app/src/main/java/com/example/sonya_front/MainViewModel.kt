@@ -80,14 +80,18 @@ class MainViewModel : ViewModel() {
         _tasksLoading.value = true
         _tasksError.value = null
         try {
+            val normalizedStatus = status.trim().lowercase()
+            // Backend can return non-"active" runtime states (e.g. pending/scheduled).
+            // For active tab we load all and filter out archived items locally.
+            val queryStatus: String? = if (normalizedStatus == "done") "done" else null
             val resp = withContext(Dispatchers.IO) {
-                ApiClient.instance.getTasks(deviceId = deviceId, status = status, limit = 50, offset = 0)
+                ApiClient.instance.getTasks(deviceId = deviceId, status = queryStatus, limit = 50, offset = 0)
             }
             Log.d("VM_TASKS", "loadTasks OK: ${resp.items.size} items")
-            if (status.lowercase() == "done") {
+            if (normalizedStatus == "done") {
                 _tasksDone.value = resp.items
             } else {
-                _tasksActive.value = resp.items
+                _tasksActive.value = resp.items.filter { it.status?.trim()?.lowercase() != "done" }
             }
         } catch (t: Throwable) {
             Log.e("VM_TASKS", "loadTasks FAIL: ${t.javaClass.simpleName}: ${t.message}", t)
