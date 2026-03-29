@@ -55,6 +55,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Today
 import androidx.compose.material.icons.filled.Unarchive
@@ -709,6 +710,7 @@ private fun TasksScreen(
     var text by remember { mutableStateOf("") }
     var urgent by remember { mutableStateOf(false) }
     var important by remember { mutableStateOf(false) }
+    var showAddForm by remember { mutableStateOf(false) }
 
     var editingId by remember { mutableStateOf<Int?>(null) }
     var editingText by remember { mutableStateOf("") }
@@ -752,6 +754,14 @@ private fun TasksScreen(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Задания", fontSize = 22.sp)
             Box(modifier = Modifier.weight(1f))
+            if (!isArchive) {
+                IconButton(onClick = { showAddForm = !showAddForm }) {
+                    androidx.compose.material3.Icon(
+                        Icons.Filled.Add,
+                        contentDescription = if (showAddForm) "Скрыть форму" else "Добавить задачу"
+                    )
+                }
+            }
             IconButton(onClick = {
                 val status = if (tasksTab == 2) "done" else "active"
                 viewModel.loadTasksAsync(deviceId, status)
@@ -782,7 +792,7 @@ private fun TasksScreen(
             )
         }
 
-        if (!isArchive) {
+        if (!isArchive && showAddForm) {
             OutlinedTextField(
                 value = text,
                 onValueChange = { text = it },
@@ -817,6 +827,7 @@ private fun TasksScreen(
                     text = ""
                     urgent = false
                     important = false
+                    showAddForm = false
                 },
                 modifier = Modifier.padding(top = 12.dp).fillMaxWidth()
             ) {
