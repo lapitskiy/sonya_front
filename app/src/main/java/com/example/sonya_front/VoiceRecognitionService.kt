@@ -470,7 +470,8 @@ class VoiceRecognitionService : Service() {
     }
 
     private fun startWakeVerificationThenCommand() {
-        // Called right after wakeword triggers. We'll listen briefly and verify "Jarvis" exists in recognition.
+        // Called right after wakeword triggers. We enter command mode only if
+        // "соня прием" is confirmed by a short second-pass recognition.
         isWakeVerificationMode = true
         isContinuousListening = true
         cancelFinalize()
@@ -481,16 +482,14 @@ class VoiceRecognitionService : Service() {
         destroySpeechRecognizerSafely()
         ensureSpeechRecognizer()
 
-        fun fallbackToCommandMode(reason: String) {
-            // Vosk already detected wake; verification is only a best-effort guard (e.g. when music is playing).
-            // On some devices SpeechRecognizer returns NO_MATCH (7) too often, causing missed wake-ups.
-            Log.w("WAKEWORD", "Wake verification fallback -> command mode. reason=$reason")
-            broadcastHint("Не удалось подтвердить «соня приём» ($reason). Слушаю команду… Если сработало случайно — скажи «отбой».")
+        fun rejectWakeAndReturn(reason: String) {
+            // Strict anti-false-positive policy: no confirmation -> no command mode.
+            Log.i("WAKEWORD", "Wake verification rejected ($reason), back to wake listening")
             isWakeVerificationMode = false
             isContinuousListening = false
             stopSpeechRecognizerSafely()
             destroySpeechRecognizerSafely()
-            speakWakeThenEnterCommandMode()
+            startWakeWordDelayed(0L)
         }
 
         val verifyListener = object : RecognitionListener {
@@ -530,14 +529,14 @@ class VoiceRecognitionService : Service() {
                     speakWakeThenEnterCommandMode()
                 } else {
                     Log.i("WAKEWORD", "Wake verification FAILED: '$chunk' -> back to wake")
-                    fallbackToCommandMode("no_match")
+                    rejectWakeAndReturn("no_match")
                 }
             }
 
             override fun onError(error: Int) {
                 // Treat errors/timeouts as a failed verification to reduce false wake-ups.
                 Log.i("WAKEWORD", "Wake verification error=$error -> back to wake")
-                fallbackToCommandMode("error=$error")
+                rejectWakeAndReturn("error=$error")
             }
         }
 
@@ -546,7 +545,7 @@ class VoiceRecognitionService : Service() {
         mainHandler.postDelayed({
             if (isWakeVerificationMode) {
                 Log.i("WAKEWORD", "Wake verification timeout -> back to wake")
-                fallbackToCommandMode("timeout")
+                rejectWakeAndReturn("timeout")
             }
         }, wakeVerifyTimeoutMs + 300L)
 
@@ -555,7 +554,7 @@ class VoiceRecognitionService : Service() {
                 speechRecognizer?.startListening(createWakeVerifyIntent())
             } catch (t: Throwable) {
                 Log.w("WAKEWORD", "Failed to start wake verification: ${t.message}")
-                fallbackToCommandMode("start_failed")
+                rejectWakeAndReturn("start_failed")
             }
         }, 50L)
     }
@@ -1653,9 +1652,7 @@ class VoiceRecognitionService : Service() {
                             }
 
                             stopWakeWordSafely()
-
-                            // Speak wake phrase first, then start recording.
-                            speakWakeThenEnterCommandMode()
+                            startWakeVerificationThenCommand()
                         }
                     }
                 ).also {
