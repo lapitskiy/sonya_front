@@ -2,7 +2,12 @@ package com.example.sonya_front
 
 import android.app.Application
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.provider.Settings
 import com.example.sonya_front.AppLog as Log
 import androidx.core.content.ContextCompat
@@ -87,6 +92,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     private var doneRetryJob: Job? = null
     private data class BattPoint(val atMs: Long, val mv: Int)
     private val battHistory = ArrayList<BattPoint>(16)
+    private var readyVibrationPending = false
 
     private lateinit var ble: SonyaWatchBleClient
 
@@ -101,6 +107,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.value = cur.copy(connected = isConn)
                 appendLog(if (isConn) "BLE connected" else "BLE disconnected")
                 if (isConn) {
+                    readyVibrationPending = true
                     // Distinguish "GATT connected" from "protocol is alive".
                     setEvent("BLE подключено (жду PONG)…")
                     // RX/TX characteristics might not be ready immediately; retry a couple of times.
@@ -113,6 +120,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
                 } else {
+                    readyVibrationPending = false
                     // Reset protocol state so UI doesn't look "stuck".
                     recording = false
                     downloading = false
@@ -436,6 +444,10 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                 if (isInfo) {
                     appendLog("watch: '$m'")
                     setEvent("WATCH: $m")
+                    if (m == "PONG" && readyVibrationPending) {
+                        readyVibrationPending = false
+                        vibrateReadyPulse()
+                    }
                 } else {
                     appendLog("watch error: '$m'")
                     setEvent("$typeName: $m")
@@ -773,6 +785,29 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
         val cur = _ui.value
         val next = (cur.logTail + line).takeLast(60)
         _ui.value = cur.copy(logTail = next)
+    }
+
+    private fun vibrateReadyPulse() {
+        try {
+            val ctx = getApplication<Application>().applicationContext
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vm = ctx.getSystemService(VibratorManager::class.java)
+                vm?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                ctx.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            } ?: return
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createOneShot(120, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(120)
+            }
+            appendLog("haptic: ready pulse")
+        } catch (t: Throwable) {
+            appendLog("haptic failed: ${t.javaClass.simpleName}: ${t.message}")
+        }
     }
 
     private fun estimateDrainRateMvPerMin(points: List<BattPoint>): Double? {
