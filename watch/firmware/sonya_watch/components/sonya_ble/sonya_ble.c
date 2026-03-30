@@ -122,7 +122,8 @@ static void on_connect(struct ble_gap_event *event, void *arg)
     conn_handle = event->connect.conn_handle;
     ESP_LOGI(TAG, "BLE connected, conn_handle=%d", conn_handle);
     sonya_diaglog_addf("ble", "connect h=%d", (int)conn_handle);
-    (void)apply_conn_params(s_conn_power_save);
+    // Keep link fast right after connect so phone can complete MTU/service/CCCD quickly.
+    (void)apply_conn_params(false);
 }
 
 static void on_disconnect(struct ble_gap_event *event, void *arg)

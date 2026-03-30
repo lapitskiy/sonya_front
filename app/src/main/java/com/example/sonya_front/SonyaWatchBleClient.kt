@@ -60,6 +60,7 @@ class SonyaWatchBleClient(
     private var autoTickRunnable: Runnable? = null
     private var scanStopRunnable: Runnable? = null
     private var connectTimeoutRunnable: Runnable? = null
+    private var mtuRequested = false
 
     private val writeQueue = ArrayDeque<ByteArray>(64)
     private var writeInFlight = false
@@ -134,6 +135,7 @@ class SonyaWatchBleClient(
         txChar = null
         writeQueue.clear()
         writeInFlight = false
+        mtuRequested = false
         setConnected(false)
         log("disconnect(): done")
     }
@@ -341,7 +343,6 @@ class SonyaWatchBleClient(
                 log("connectGatt: missing Bluetooth permissions (CONNECT)")
                 return
             }
-            tryEnsureBond(dev)
             scheduleConnectTimeout()
             val g = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 dev.connectGatt(appCtx, false, gattCb, BluetoothDevice.TRANSPORT_LE)
@@ -367,12 +368,7 @@ class SonyaWatchBleClient(
                     connecting.set(false)
                     cancelConnectTimeout()
                     saveLastAddr(gatt.device?.address)
-                    try {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                            gatt.requestMtu(247)
-                        }
-                    } catch (_: Throwable) {
-                    }
+                    mtuRequested = false
                     try {
                         gatt.discoverServices()
                     } catch (t: Throwable) {
@@ -392,6 +388,7 @@ class SonyaWatchBleClient(
                         service = null
                         rxChar = null
                         txChar = null
+                        mtuRequested = false
                     }
                     if (autoEnabled) {
                         scheduleNextAutoTick(1200L)
@@ -446,6 +443,19 @@ class SonyaWatchBleClient(
             val uuid = try { descriptor.uuid.toString() } catch (_: Throwable) { "<uuid?>" }
             val chUuid = try { descriptor.characteristic?.uuid?.toString() } catch (_: Throwable) { "<ch?>" }
             log("gatt: descriptorWrite status=$status desc=$uuid ch=$chUuid")
+            if (status == BluetoothGatt.GATT_SUCCESS &&
+                descriptor.uuid == UUID.fromString("00002902-0000-1000-8000-00805f9b34fb") &&
+                !mtuRequested) {
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        mtuRequested = true
+                        val ok = gatt.requestMtu(247)
+                        log("gatt: requestMtu(247) after notify ok=$ok")
+                    }
+                } catch (t: Throwable) {
+                    log("gatt: requestMtu after notify failed: ${t.message}")
+                }
+            }
         }
 
         @Deprecated("Deprecated in Java")
