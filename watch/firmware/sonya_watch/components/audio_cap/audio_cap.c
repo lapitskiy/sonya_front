@@ -160,8 +160,9 @@ static int init_spk_codec(int sr)
         ESP_LOGE(TAG, "esp_codec_dev_open(spk) failed: %d", err);
         return -1;
     }
-    (void)esp_codec_dev_set_out_mute(s_spk, false);
-    (void)esp_codec_dev_set_out_vol(s_spk, 60);
+    // Keep DAC muted in idle; unmute only for short beeps.
+    (void)esp_codec_dev_set_out_mute(s_spk, true);
+    (void)esp_codec_dev_set_out_vol(s_spk, 40);
     return 0;
 }
 
@@ -335,6 +336,7 @@ int audio_cap_init(void)
 int audio_cap_start(void)
 {
     if (!rx_handle) return -1;
+    if (!s_tx_handle) return -1;
     // esp_codec_dev (via audio_codec_new_i2s_data + esp_codec_dev_open) may already
     // enable the I2S channel. Make start idempotent by forcing a clean disable->enable.
     esp_err_t err = i2s_channel_disable(rx_handle);
@@ -346,6 +348,13 @@ int audio_cap_start(void)
     err = i2s_channel_enable(rx_handle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "i2s_channel_enable(rx) failed: %s (%d)", esp_err_to_name(err), (int)err);
+        return -1;
+    }
+    // Some boards/codecs need TX clock path alive for stable MIC capture (shared I2S clocks).
+    err = i2s_channel_enable(s_tx_handle);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "i2s_channel_enable(tx) failed: %s (%d)", esp_err_to_name(err), (int)err);
+        (void)i2s_channel_disable(rx_handle);
         return -1;
     }
     capturing = true;
@@ -459,9 +468,14 @@ int audio_cap_play_tone(uint16_t freq_hz, uint16_t duration_ms, uint8_t volume_p
         int wr = esp_codec_dev_write(s_spk, pcm, (int)(batch * sizeof(int16_t) * 2U));
         if (wr != ESP_OK) {
             ESP_LOGE(TAG, "esp_codec_dev_write failed: %d", wr);
+            (void)esp_codec_dev_set_out_mute(s_spk, true);
+            (void)i2s_channel_disable(s_tx_handle);
             return -1;
         }
         total_samples -= batch;
     }
+    // Return speaker path to low-power idle state after short tone.
+    (void)esp_codec_dev_set_out_mute(s_spk, true);
+    (void)i2s_channel_disable(s_tx_handle);
     return 0;
 }

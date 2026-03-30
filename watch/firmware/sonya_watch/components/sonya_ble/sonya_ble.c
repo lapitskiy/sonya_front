@@ -38,6 +38,7 @@ static char device_name[32];
 static uint16_t tx_seq;
 static uint8_t tx_queue[256];
 static uint8_t s_own_addr_type;
+static TickType_t s_fast_adv_until_tick;
 
 #define TX_QUEUE_MAX (sizeof(tx_queue) - PROTO_FRAME_HEADER_SIZE)
 // Pacing is important: back-to-back notifications can exhaust NimBLE mbufs on ESP32-S3,
@@ -46,6 +47,19 @@ static uint8_t s_own_addr_type;
 // With audio, transient mbuf pressure is normal. Give NimBLE time to reclaim buffers.
 #define BLE_NOTIFY_RETRY_MAX 200
 #define BLE_NOTIFY_RETRY_DELAY_MS 10
+#define BLE_FAST_ADV_BOOT_MS 15000
+#define BLE_FAST_ADV_RECONNECT_MS 5000
+
+static void arm_fast_adv_window(uint32_t ms)
+{
+    s_fast_adv_until_tick = xTaskGetTickCount() + pdMS_TO_TICKS(ms);
+}
+
+static bool is_fast_adv_window(void)
+{
+    TickType_t now = xTaskGetTickCount();
+    return ((int32_t)(s_fast_adv_until_tick - now) > 0);
+}
 
 static int gatt_access(uint16_t conn, uint16_t attr_handle,
                        struct ble_gatt_access_ctxt *ctxt, void *arg);
@@ -116,6 +130,7 @@ static void on_disconnect(struct ble_gap_event *event, void *arg)
     conn_handle = BLE_HS_CONN_HANDLE_NONE;
     ESP_LOGI(TAG, "BLE disconnected, reason=%d", event->disconnect.reason);
     sonya_diaglog_addf("ble", "disconnect reason=%d", (int)event->disconnect.reason);
+    arm_fast_adv_window(BLE_FAST_ADV_RECONNECT_MS);
     start_advertising();
 }
 
@@ -163,10 +178,18 @@ static int start_advertising(void)
     memset(&adv_params, 0, sizeof(adv_params));
     adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
     adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
-    // Use moderately slow advertising while idle to reduce radio duty cycle.
-    // Units are 0.625ms -> 320..640 => 200..400ms.
-    adv_params.itvl_min = 320;
-    adv_params.itvl_max = 640;
+    const bool fast_adv = is_fast_adv_window();
+    if (fast_adv) {
+        // Fast connect window after boot/reconnect.
+        // Units are 0.625ms -> 48..96 => 30..60ms.
+        adv_params.itvl_min = 48;
+        adv_params.itvl_max = 96;
+    } else {
+        // Idle power-save advertising.
+        // Units are 0.625ms -> 320..640 => 200..400ms.
+        adv_params.itvl_min = 320;
+        adv_params.itvl_max = 640;
+    }
 
     rc = ble_gap_adv_start(s_own_addr_type, NULL, BLE_HS_FOREVER,
                            &adv_params, gap_event, NULL);
@@ -174,7 +197,7 @@ static int start_advertising(void)
         ESP_LOGE(TAG, "adv start err %d", rc);
         return rc;
     }
-    ESP_LOGI(TAG, "BLE advertising started, name=%s", device_name);
+    ESP_LOGI(TAG, "BLE advertising started, name=%s profile=%s", device_name, fast_adv ? "FAST" : "SLOW");
     return 0;
 }
 
@@ -191,6 +214,7 @@ static void on_sync(void)
         ESP_LOGE(TAG, "infer_auto failed rc=%d", rc);
         return;
     }
+    arm_fast_adv_window(BLE_FAST_ADV_BOOT_MS);
     start_advertising();
 }
 
@@ -246,11 +270,13 @@ static int apply_conn_params(bool power_save)
     struct ble_gap_upd_params p;
     memset(&p, 0, sizeof(p));
     if (power_save) {
-        // 60..90ms, latency 4 (skip up to 4 intervals), supervision 5s.
-        p.itvl_min = 48;
-        p.itvl_max = 72;
-        p.latency = 4;
-        p.supervision_timeout = 500;
+        // Idle power-save profile: longer interval + higher latency.
+        // This cuts radio duty cycle when we are connected but not streaming audio.
+        // 120..150ms, latency 9, supervision 6s.
+        p.itvl_min = 96;
+        p.itvl_max = 120;
+        p.latency = 9;
+        p.supervision_timeout = 600;
     } else {
         // 15..30ms, no latency for responsive streaming/commands.
         p.itvl_min = 12;

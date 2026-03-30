@@ -25,10 +25,13 @@
 #include "sdkconfig.h"
 #include "sonya_board.h"
 #include "esp_system.h"
+#include "esp_sleep.h"
 
 static const char *TAG = "main";
 
 #define REC_MAX_SEC 30
+#define AUTO_OFF_NO_TRANSFER_MS (5U * 60U * 1000U)
+#define AUTO_OFF_AFTER_TRANSFER_MS (2U * 60U * 1000U)
 
 static int s_rec_seconds = CONFIG_REC_SECONDS;
 static volatile bool s_is_recording = false;
@@ -39,6 +42,9 @@ static bool s_audio_streaming = false;
 static TickType_t s_last_pwrmon_tick = 0;
 static int s_last_pwrmon_bmv = -1;
 static TickType_t s_last_rec_end_tick = 0;
+static TickType_t s_boot_tick = 0;
+static TickType_t s_last_ble_transfer_tick = 0;
+static bool s_auto_off_attempted = false;
 
 static void send_batt_status(const char *reason)
 {
@@ -176,6 +182,76 @@ static bool btn_released_stable_ms(int stable_ms)
 #endif
 }
 
+static void mark_ble_transfer_activity(const char *reason)
+{
+    s_last_ble_transfer_tick = xTaskGetTickCount();
+    ESP_LOGI(TAG, "AUTO_OFF: transfer activity (%s)", reason ? reason : "n/a");
+}
+
+static esp_err_t enter_idle_hibernation(void)
+{
+#if defined(CONFIG_WAKE_MODE_BUTTON) || defined(CONFIG_WAKE_MODE_MULTI)
+    const gpio_num_t wake_gpio = (gpio_num_t)CONFIG_WAKE_BUTTON_GPIO;
+#if defined(CONFIG_WAKE_BUTTON_ACTIVE_HIGH)
+    const int wake_level = 1;
+#else
+    const int wake_level = 0;
+#endif
+    esp_err_t err = esp_sleep_enable_ext0_wakeup(wake_gpio, wake_level);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "AUTO_OFF: ext0 wake cfg failed gpio=%d level=%d err=%d",
+                 (int)wake_gpio, wake_level, (int)err);
+        return err;
+    }
+    ESP_LOGW(TAG, "AUTO_OFF: entering deep sleep (wake gpio=%d level=%d)",
+             (int)wake_gpio, wake_level);
+    sonya_diaglog_addf("sys", "auto_sleep gpio=%d lvl=%d", (int)wake_gpio, wake_level);
+    vTaskDelay(pdMS_TO_TICKS(30));
+    esp_deep_sleep_start();
+    return ESP_OK;
+#else
+    ESP_LOGE(TAG, "AUTO_OFF: no button wake mode, deep sleep disabled");
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
+}
+
+static void maybe_auto_power_off(TickType_t now)
+{
+    if (s_auto_off_attempted || s_is_recording) return;
+
+    const TickType_t timeout_ticks = pdMS_TO_TICKS(
+        (s_last_ble_transfer_tick == 0) ? AUTO_OFF_NO_TRANSFER_MS : AUTO_OFF_AFTER_TRANSFER_MS
+    );
+    const TickType_t ref_tick = (s_last_ble_transfer_tick == 0) ? s_boot_tick : s_last_ble_transfer_tick;
+
+    if (ref_tick == 0 || (now - ref_tick) < timeout_ticks) return;
+
+    s_auto_off_attempted = true;
+    uint32_t idle_ms = (uint32_t)((now - ref_tick) * portTICK_PERIOD_MS);
+    ESP_LOGW(TAG, "AUTO_OFF: timeout reached (idle_ms=%lu, had_transfer=%d)",
+             (unsigned long)idle_ms, s_last_ble_transfer_tick == 0 ? 0 : 1);
+    sonya_diaglog_addf("sys", "auto_off idle_ms=%lu tx=%d",
+                       (unsigned long)idle_ms, s_last_ble_transfer_tick == 0 ? 0 : 1);
+
+    status_ui_show_message("SLEEP", 700);
+    if (sonya_ble_is_connected()) {
+        sonya_ble_send_evt_error("AUTO_SLEEP:IDLE");
+    }
+    if (s_audio_streaming) {
+        audio_cap_stop();
+        s_audio_streaming = false;
+    }
+    (void)sonya_ble_set_conn_power_save(true);
+    vTaskDelay(pdMS_TO_TICKS(60));
+
+    esp_err_t off_err = enter_idle_hibernation();
+    if (off_err != ESP_OK) {
+        ESP_LOGE(TAG, "AUTO_OFF: deep sleep failed: %d", (int)off_err);
+        sonya_diaglog_addf("sys", "auto_sleep fail=%d", (int)off_err);
+        status_ui_set_error(true);
+    }
+}
+
 /* ---- BLE RX handler ---- */
 
 static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
@@ -218,20 +294,34 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
         }
         break;
     case PROTO_CMD_GET:
+        mark_ble_transfer_activity("GET");
         pull_stream_handle_get(rec_id, off, want_len);
         break;
     case PROTO_CMD_DONE:
+        mark_ble_transfer_activity("DONE");
+        if (s_is_recording) {
+            ESP_LOGW(TAG, "RX: DONE ignored while recording (id=%u cur_id=%u)",
+                     (unsigned)rec_id, (unsigned)rec_store_cur_id());
+            if (sonya_ble_is_connected()) {
+                sonya_ble_send_evt_error("DONE_IGN:REC");
+            }
+            break;
+        }
         if (rec_id == rec_store_cur_id()) {
             pull_stream_handle_done(rec_id);
             status_ui_show_ok(900);
             s_last_rec_end_tick = 0;
+            if (sonya_ble_is_connected()) {
+                char msg[32];
+                snprintf(msg, sizeof(msg), "DONE_OK:%u", (unsigned)rec_id);
+                sonya_ble_send_evt_error(msg);
+            }
         } else {
-            pull_stream_handle_done(rec_id);
-        }
-        if (sonya_ble_is_connected()) {
-            char msg[32];
-            snprintf(msg, sizeof(msg), "DONE_OK:%u", (unsigned)rec_id);
-            sonya_ble_send_evt_error(msg);
+            ESP_LOGW(TAG, "RX: DONE ignored (stale id=%u cur_id=%u)",
+                     (unsigned)rec_id, (unsigned)rec_store_cur_id());
+            if (sonya_ble_is_connected()) {
+                sonya_ble_send_evt_error("DONE_IGN:STALE");
+            }
         }
         break;
     default:
@@ -591,6 +681,7 @@ void app_main(void)
 
     status_ui_set_recording(false);
 
+    s_boot_tick = xTaskGetTickCount();
     TickType_t boot_ready = xTaskGetTickCount() + pdMS_TO_TICKS(2000);
 
     for (;;) {
@@ -600,6 +691,7 @@ void app_main(void)
             (s_last_batt_sent_tick == 0 || (loop_now - s_last_batt_sent_tick) >= pdMS_TO_TICKS(60000))) {
             send_batt_status("periodic");
         }
+        maybe_auto_power_off(loop_now);
         bool trig = wake_poll_or_wait(100);
         if (!trig) continue;
         TickType_t now = xTaskGetTickCount();
@@ -683,14 +775,12 @@ void app_main(void)
         }
 
         if (sonya_ble_is_connected() && rec_store_total_bytes() > 0) {
-            ESP_LOGW(TAG, "record blocked: previous record pending transfer (bytes=%d id=%u)",
-                     rec_store_total_bytes(), (unsigned)rec_store_cur_id());
-            sonya_ble_send_evt_error("REC_BUSY:WAIT_DONE");
-            status_ui_set_error(true);
-            status_ui_set_recording(false);
-            status_ui_show_message("WAIT", 800);
-            s_is_recording = false;
-            continue;
+            // Robustness for real usage: if host missed DONE/ack, do not block the next
+            // button recording forever. Replace stale pending record on new trigger.
+            ESP_LOGW(TAG, "dropping pending record before new rec (bytes=%d id=%u by_btn=%d)",
+                     rec_store_total_bytes(), (unsigned)rec_store_cur_id(), by_btn ? 1 : 0);
+            rec_store_clear();
+            s_last_rec_end_tick = 0;
         }
 
         if (sonya_ble_is_connected())

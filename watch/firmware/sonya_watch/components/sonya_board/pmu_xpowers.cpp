@@ -160,3 +160,16 @@ extern "C" esp_err_t sonya_board_pmu_read_status(int *batt_pct,
     return ESP_OK;
 }
 
+extern "C" esp_err_t sonya_board_power_off(void)
+{
+    if (!s_pmu_ready) {
+        ESP_LOGW(TAG, "power_off requested but PMU not ready");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    ESP_LOGW(TAG, "PMU power off requested");
+    sonya_diaglog_add("pmu", "power_off:req");
+    s_pmu.shutdown();
+    return ESP_OK;
+}
+

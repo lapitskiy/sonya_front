@@ -845,7 +845,7 @@ class VoiceRecognitionService : Service() {
                 } else if (resp.isSuccessful) {
                     // Voice feedback: backend accepted the command ("поставилась в работу").
                     vibrateVoiceAck()
-                    val spokenAck = if (isUnknownCommandType(finalResponseType)) "Не поняла" else "Всё ОК"
+                    val spokenAck = if (isUnknownCommandType(finalResponseType)) "Не поняла, повторите" else "Всё ОК"
                     speakOnMain(spokenAck, queueMode = TextToSpeech.QUEUE_ADD)
                     broadcastStatusUpdate("Команда отправлена")
                 } else {

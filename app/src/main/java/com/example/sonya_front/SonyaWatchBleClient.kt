@@ -51,8 +51,12 @@ class SonyaWatchBleClient(
     private val scanLoggedAddrs = HashSet<String>()
     private var scanOtherLogBudget = 20
     @Volatile private var autoEnabled = false
-    private var autoIntervalMs: Long = 15_000L
-    private var autoScanWindowMs: Long = 6_000L
+    private var normalAutoIntervalMs: Long = 15_000L
+    private var normalAutoScanWindowMs: Long = 6_000L
+    private val fastAutoIntervalMs: Long = 1_000L
+    private val fastAutoScanWindowMs: Long = 10_000L
+    private val fastWindowDurationMs: Long = 10_000L
+    @Volatile private var fastUntilMs: Long = 0L
     private var autoTickRunnable: Runnable? = null
     private var scanStopRunnable: Runnable? = null
     private var connectTimeoutRunnable: Runnable? = null
@@ -73,23 +77,25 @@ class SonyaWatchBleClient(
         intervalMs: Long = 15_000L,
         scanWindowMs: Long = 6_000L,
     ) {
-        autoIntervalMs = intervalMs
-        autoScanWindowMs = scanWindowMs
+        normalAutoIntervalMs = intervalMs
+        normalAutoScanWindowMs = scanWindowMs
         if (autoEnabled == enabled) return
         autoEnabled = enabled
         if (!enabled) {
             cancelAutoRunnables()
             stopScanIfRunning(reason = "auto_disabled")
             // Do NOT disconnect an active connection here; user may want to keep it.
+            fastUntilMs = 0L
             log("auto: disabled")
             return
         }
-        log("auto: enabled (interval=${autoIntervalMs}ms window=${autoScanWindowMs}ms)")
+        log("auto: enabled (normal=${normalAutoIntervalMs}ms/${normalAutoScanWindowMs}ms fast=${fastAutoIntervalMs}ms/${fastAutoScanWindowMs}ms)")
         kickAutoConnectNow()
     }
 
     fun kickAutoConnectNow() {
         if (!autoEnabled) return
+        triggerFastWindow("kick")
         mainHandler.post { autoTick() }
     }
 
@@ -133,7 +139,7 @@ class SonyaWatchBleClient(
     }
 
     @SuppressLint("MissingPermission")
-    fun scanAndConnect(force: Boolean = true) {
+    fun scanAndConnect(force: Boolean = true, scanWindowMsOverride: Long? = null) {
         val adapter = getAdapter()
         if (adapter == null) {
             log("Bluetooth adapter is null")
@@ -156,6 +162,7 @@ class SonyaWatchBleClient(
 
         // Manual button should be a "force reconnect": reset state.
         if (force) {
+            triggerFastWindow("manual_force")
             disconnect(stopAuto = false)
         } else {
             closeGattState(reason = "scan_restart")
@@ -168,6 +175,7 @@ class SonyaWatchBleClient(
         }
 
         // New scan session: used to ignore stale callbacks.
+        val scanWindowMs = (scanWindowMsOverride ?: currentScanWindowMs()).coerceAtLeast(1500L)
         scanLoggedAddrs.clear()
         scanOtherLogBudget = 20
         connecting.set(false)
@@ -222,7 +230,7 @@ class SonyaWatchBleClient(
         }
 
         scannerCallback = cb
-        log("scan: start (looking for name=${SonyaWatchProtocol.DEVICE_NAME})")
+        log("scan: start (looking for name=${SonyaWatchProtocol.DEVICE_NAME}, window=${scanWindowMs}ms)")
         try {
             // No ScanFilter: in practice some firmwares don't advertise service UUIDs reliably,
             // and name can be in scan record (not always matched by ScanFilter as expected).
@@ -234,7 +242,7 @@ class SonyaWatchBleClient(
                 // Stop scan window if we didn't connect.
                 stopScanIfRunning(reason = "scan_window_timeout")
             }
-            mainHandler.postDelayed(scanStopRunnable!!, autoScanWindowMs.coerceAtLeast(1500L))
+            mainHandler.postDelayed(scanStopRunnable!!, scanWindowMs)
         } catch (se: SecurityException) {
             log("scan: SecurityException (missing BLUETOOTH_SCAN?): ${se.message}")
             scannerCallback = null
@@ -564,31 +572,49 @@ class SonyaWatchBleClient(
         return try { prefs.getString(prefKeyLastAddr, "")?.trim().orEmpty() } catch (_: Throwable) { "" }
     }
 
+    private fun triggerFastWindow(reason: String) {
+        fastUntilMs = System.currentTimeMillis() + fastWindowDurationMs
+        log("auto: fast window ${fastWindowDurationMs}ms ($reason)")
+    }
+
+    private fun inFastWindow(nowMs: Long = System.currentTimeMillis()): Boolean = nowMs < fastUntilMs
+
+    private fun currentAutoIntervalMs(nowMs: Long = System.currentTimeMillis()): Long {
+        return if (inFastWindow(nowMs)) fastAutoIntervalMs else normalAutoIntervalMs
+    }
+
+    private fun currentScanWindowMs(nowMs: Long = System.currentTimeMillis()): Long {
+        return if (inFastWindow(nowMs)) fastAutoScanWindowMs else normalAutoScanWindowMs
+    }
+
     private fun autoTick() {
         if (!autoEnabled) return
+        val nowMs = System.currentTimeMillis()
+        val intervalMs = currentAutoIntervalMs(nowMs)
+        val scanWindowMs = currentScanWindowMs(nowMs)
         if (connected) {
-            scheduleNextAutoTick(autoIntervalMs)
+            scheduleNextAutoTick(intervalMs)
             return
         }
         if (connecting.get()) {
-            scheduleNextAutoTick(autoIntervalMs)
+            scheduleNextAutoTick(intervalMs)
             return
         }
 
         val adapter = getAdapter()
         if (adapter == null) {
             log("auto: Bluetooth adapter is null")
-            scheduleNextAutoTick(autoIntervalMs)
+            scheduleNextAutoTick(intervalMs)
             return
         }
         if (!adapter.isEnabled) {
             log("auto: Bluetooth is disabled")
-            scheduleNextAutoTick(autoIntervalMs)
+            scheduleNextAutoTick(intervalMs)
             return
         }
         if (!hasBlePermissionsForScanAndConnect()) {
             log("auto: missing Bluetooth permissions (SCAN/CONNECT)")
-            scheduleNextAutoTick(autoIntervalMs)
+            scheduleNextAutoTick(intervalMs)
             return
         }
 
@@ -601,7 +627,7 @@ class SonyaWatchBleClient(
                     closeGattState(reason = "auto_direct_connect")
                     log("auto: direct connect addr=$addr")
                     connectGatt(dev)
-                    scheduleNextAutoTick(autoIntervalMs)
+                    scheduleNextAutoTick(intervalMs)
                     return
                 }
             } catch (se: SecurityException) {
@@ -613,12 +639,12 @@ class SonyaWatchBleClient(
 
         // 2) Otherwise scan in a short window.
         if (scannerCallback != null) {
-            scheduleNextAutoTick(autoIntervalMs)
+            scheduleNextAutoTick(intervalMs)
             return
         }
-        log("auto: scan+connect")
-        scanAndConnect(force = false)
-        scheduleNextAutoTick(autoIntervalMs)
+        log("auto: scan+connect (interval=${intervalMs}ms window=${scanWindowMs}ms fast=${if (inFastWindow(nowMs)) 1 else 0})")
+        scanAndConnect(force = false, scanWindowMsOverride = scanWindowMs)
+        scheduleNextAutoTick(intervalMs)
     }
 
     private fun scheduleNextAutoTick(delayMs: Long) {

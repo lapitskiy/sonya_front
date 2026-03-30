@@ -661,6 +661,8 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                 appendLog("pcm level: samples=${stats.samples} maxAbs=${stats.maxAbs} rms=${"%.4f".format(stats.rms)}")
                 if (stats.maxAbs < 80) {
                     appendLog("pcm looks like silence (maxAbs<80)")
+                } else if (stats.maxAbs < 2000) {
+                    appendLog("pcm very quiet (maxAbs<2000), recognition can be blank")
                 }
 
                 // Transcribe (offline) and send as /command to backend (same flow as phone voice).

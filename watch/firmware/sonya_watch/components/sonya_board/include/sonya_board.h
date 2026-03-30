@@ -36,6 +36,12 @@ esp_err_t sonya_board_pmu_read_status(int *batt_pct,
                                       bool *vbus_in,
                                       bool *battery_present);
 
+/**
+ * Request PMU full power-off.
+ * Device can be turned on again by hardware PWR button.
+ */
+esp_err_t sonya_board_power_off(void);
+
 #ifdef __cplusplus
 }
 #endif

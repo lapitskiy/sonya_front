@@ -25,20 +25,60 @@ object SonyaWatchVoskTranscriber {
         if (pcmBytes.isEmpty()) return ""
 
         val m = ensureModelLoaded(context.applicationContext)
+        val prepared = autoGainForSpeech(pcmBytes)
         Recognizer(m, SAMPLE_RATE).use { rec ->
             rec.setWords(false)
             val chunk = 4000
             val buf = ByteArray(chunk)
             var off = 0
-            while (off < pcmBytes.size) {
-                val n = (pcmBytes.size - off).coerceAtMost(chunk)
-                System.arraycopy(pcmBytes, off, buf, 0, n)
+            while (off < prepared.size) {
+                val n = (prepared.size - off).coerceAtMost(chunk)
+                System.arraycopy(prepared, off, buf, 0, n)
                 rec.acceptWaveForm(buf, n)
                 off += n
             }
             val json = rec.finalResult
             return extractText(json).orEmpty()
         }
+    }
+
+    /**
+     * Watch mic can produce very quiet PCM on some boards/codec configs.
+     * Apply bounded linear gain before Vosk to improve recognition recall.
+     */
+    private fun autoGainForSpeech(src: ByteArray): ByteArray {
+        if (src.size < 2) return src
+
+        var peak = 0
+        var i = 0
+        while (i + 1 < src.size) {
+            val lo = src[i].toInt() and 0xFF
+            val hi = src[i + 1].toInt()
+            val s = ((hi shl 8) or lo).toShort().toInt()
+            val a = kotlin.math.abs(s)
+            if (a > peak) peak = a
+            i += 2
+        }
+        if (peak <= 0) return src
+
+        val targetPeak = 12000.0
+        val gain = (targetPeak / peak.toDouble()).coerceIn(1.0, 10.0)
+        if (gain <= 1.05) return src
+
+        val out = ByteArray(src.size)
+        i = 0
+        while (i + 1 < src.size) {
+            val lo = src[i].toInt() and 0xFF
+            val hi = src[i + 1].toInt()
+            val s = ((hi shl 8) or lo).toShort().toInt()
+            val boosted = (s.toDouble() * gain).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+            out[i] = (boosted and 0xFF).toByte()
+            out[i + 1] = ((boosted ushr 8) and 0xFF).toByte()
+            i += 2
+        }
+
+        Log.i(TAG, "auto-gain applied: peak=$peak gain=${"%.2f".format(gain)}")
+        return out
     }
 
     @Synchronized

@@ -32,6 +32,11 @@ CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=32
 CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=48
 CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT=48
 
+# Power management: allow automatic idle/light-sleep transitions.
+CONFIG_PM_ENABLE=y
+CONFIG_PM_POWER_DOWN_CPU_IN_LIGHT_SLEEP=y
+CONFIG_PM_POWER_DOWN_TAGMEM_IN_LIGHT_SLEEP=y
+
 # WakeNet (esp-sr): pick at least one wake phrase, otherwise wakenet_model_name is NULL and wake_init fails.
 # Wake phrase: "Hi Joy"
 CONFIG_SR_WN_WN9_HIJOY_TTS=y
