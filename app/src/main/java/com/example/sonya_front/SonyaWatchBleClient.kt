@@ -61,6 +61,8 @@ class SonyaWatchBleClient(
     private var scanStopRunnable: Runnable? = null
     private var connectTimeoutRunnable: Runnable? = null
     private var mtuRequested = false
+    private var servicesDiscoveryStarted = false
+    private var notifyEnableRequested = false
 
     private val writeQueue = ArrayDeque<ByteArray>(64)
     private var writeInFlight = false
@@ -136,6 +138,8 @@ class SonyaWatchBleClient(
         writeQueue.clear()
         writeInFlight = false
         mtuRequested = false
+        servicesDiscoveryStarted = false
+        notifyEnableRequested = false
         setConnected(false)
         log("disconnect(): done")
     }
@@ -343,7 +347,7 @@ class SonyaWatchBleClient(
                 log("connectGatt: missing Bluetooth permissions (CONNECT)")
                 return
             }
-            scheduleConnectTimeout()
+            scheduleConnectTimeout(currentConnectTimeoutMs())
             val g = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 dev.connectGatt(appCtx, false, gattCb, BluetoothDevice.TRANSPORT_LE)
             } else {
@@ -368,10 +372,16 @@ class SonyaWatchBleClient(
                     connecting.set(false)
                     cancelConnectTimeout()
                     saveLastAddr(gatt.device?.address)
+                    if (servicesDiscoveryStarted) {
+                        log("gatt: duplicate STATE_CONNECTED ignored")
+                        return
+                    }
+                    servicesDiscoveryStarted = true
                     mtuRequested = false
                     try {
                         gatt.discoverServices()
                     } catch (t: Throwable) {
+                        servicesDiscoveryStarted = false
                         log("discoverServices failed: ${t.message}")
                     }
                 }
@@ -389,6 +399,8 @@ class SonyaWatchBleClient(
                         rxChar = null
                         txChar = null
                         mtuRequested = false
+                        servicesDiscoveryStarted = false
+                        notifyEnableRequested = false
                     }
                     if (autoEnabled) {
                         scheduleNextAutoTick(1200L)
@@ -404,10 +416,15 @@ class SonyaWatchBleClient(
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             log("gatt: servicesDiscovered status=$status")
             if (status != BluetoothGatt.GATT_SUCCESS) return
+            if (notifyEnableRequested) {
+                log("gatt: duplicate servicesDiscovered ignored")
+                return
+            }
 
             val svc = gatt.getService(SonyaWatchProtocol.SERVICE_UUID)
             if (svc == null) {
                 log("gatt: service not found ${SonyaWatchProtocol.SERVICE_UUID}")
+                servicesDiscoveryStarted = false
                 return
             }
 
@@ -419,6 +436,7 @@ class SonyaWatchBleClient(
             if (txChar == null) log("gatt: TX characteristic not found ${SonyaWatchProtocol.TX_UUID}")
 
             val tx = txChar ?: return
+            notifyEnableRequested = true
             enableNotify(gatt, tx)
         }
 
@@ -600,6 +618,7 @@ class SonyaWatchBleClient(
     private fun autoTick() {
         if (!autoEnabled) return
         val nowMs = System.currentTimeMillis()
+        val fastWindow = inFastWindow(nowMs)
         val intervalMs = currentAutoIntervalMs(nowMs)
         val scanWindowMs = currentScanWindowMs(nowMs)
         if (connected) {
@@ -628,22 +647,24 @@ class SonyaWatchBleClient(
             return
         }
 
-        // 1) Try direct connect to last known address.
-        val addr = loadLastAddr()
-        if (addr.isNotBlank()) {
-            try {
-                val dev = adapter.getRemoteDevice(addr)
-                if (connecting.compareAndSet(false, true)) {
-                    closeGattState(reason = "auto_direct_connect")
-                    log("auto: direct connect addr=$addr")
-                    connectGatt(dev)
-                    scheduleNextAutoTick(intervalMs)
-                    return
+        // 1) Outside fast window prefer direct reconnect by last known address.
+        if (!fastWindow) {
+            val addr = loadLastAddr()
+            if (addr.isNotBlank()) {
+                try {
+                    val dev = adapter.getRemoteDevice(addr)
+                    if (connecting.compareAndSet(false, true)) {
+                        closeGattState(reason = "auto_direct_connect")
+                        log("auto: direct connect addr=$addr")
+                        connectGatt(dev)
+                        scheduleNextAutoTick(intervalMs)
+                        return
+                    }
+                } catch (se: SecurityException) {
+                    log("auto: direct connect SecurityException: ${se.message}")
+                } catch (t: Throwable) {
+                    log("auto: direct connect failed: ${t.javaClass.simpleName}: ${t.message}")
                 }
-            } catch (se: SecurityException) {
-                log("auto: direct connect SecurityException: ${se.message}")
-            } catch (t: Throwable) {
-                log("auto: direct connect failed: ${t.javaClass.simpleName}: ${t.message}")
             }
         }
 
@@ -689,6 +710,14 @@ class SonyaWatchBleClient(
     }
 
     private fun scheduleConnectTimeout() {
+        scheduleConnectTimeout(12_000L)
+    }
+
+    private fun currentConnectTimeoutMs(nowMs: Long = System.currentTimeMillis()): Long {
+        return if (inFastWindow(nowMs)) 4_500L else 12_000L
+    }
+
+    private fun scheduleConnectTimeout(timeoutMs: Long) {
         connectTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
         connectTimeoutRunnable = Runnable {
             if (!connecting.get() || connected) return@Runnable
@@ -697,7 +726,7 @@ class SonyaWatchBleClient(
             connecting.set(false)
             setConnected(false)
         }
-        mainHandler.postDelayed(connectTimeoutRunnable!!, 12_000L)
+        mainHandler.postDelayed(connectTimeoutRunnable!!, timeoutMs)
     }
 
     private fun cancelConnectTimeout() {
@@ -721,6 +750,9 @@ class SonyaWatchBleClient(
         txChar = null
         writeQueue.clear()
         writeInFlight = false
+        mtuRequested = false
+        servicesDiscoveryStarted = false
+        notifyEnableRequested = false
         cancelConnectTimeout()
         log("gatt: cleared ($reason)")
     }
