@@ -483,13 +483,22 @@ class VoiceRecognitionService : Service() {
         ensureSpeechRecognizer()
 
         fun rejectWakeAndReturn(reason: String) {
-            // Strict anti-false-positive policy: no confirmation -> no command mode.
             Log.i("WAKEWORD", "Wake verification rejected ($reason), back to wake listening")
             isWakeVerificationMode = false
             isContinuousListening = false
             stopSpeechRecognizerSafely()
             destroySpeechRecognizerSafely()
             startWakeWordDelayed(0L)
+        }
+
+        fun proceedToCommandMode(reason: String) {
+            // Soft guard: if quick verification timed out/errored, don't block normal UX.
+            Log.i("WAKEWORD", "Wake verification fallback to command mode ($reason)")
+            isWakeVerificationMode = false
+            isContinuousListening = false
+            stopSpeechRecognizerSafely()
+            destroySpeechRecognizerSafely()
+            speakWakeThenEnterCommandMode()
         }
 
         val verifyListener = object : RecognitionListener {
@@ -534,9 +543,9 @@ class VoiceRecognitionService : Service() {
             }
 
             override fun onError(error: Int) {
-                // Treat errors/timeouts as a failed verification to reduce false wake-ups.
-                Log.i("WAKEWORD", "Wake verification error=$error -> back to wake")
-                rejectWakeAndReturn("error=$error")
+                // Soft mode: recognizer glitches should not block wake UX.
+                Log.i("WAKEWORD", "Wake verification error=$error -> command mode")
+                proceedToCommandMode("error=$error")
             }
         }
 
@@ -544,8 +553,8 @@ class VoiceRecognitionService : Service() {
         speechRecognizer?.setRecognitionListener(verifyListener)
         mainHandler.postDelayed({
             if (isWakeVerificationMode) {
-                Log.i("WAKEWORD", "Wake verification timeout -> back to wake")
-                rejectWakeAndReturn("timeout")
+                Log.i("WAKEWORD", "Wake verification timeout -> command mode")
+                proceedToCommandMode("timeout")
             }
         }, wakeVerifyTimeoutMs + 300L)
 
@@ -554,7 +563,7 @@ class VoiceRecognitionService : Service() {
                 speechRecognizer?.startListening(createWakeVerifyIntent())
             } catch (t: Throwable) {
                 Log.w("WAKEWORD", "Failed to start wake verification: ${t.message}")
-                rejectWakeAndReturn("start_failed")
+                proceedToCommandMode("start_failed")
             }
         }, 50L)
     }
