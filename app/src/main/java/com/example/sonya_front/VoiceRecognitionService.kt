@@ -539,8 +539,15 @@ class VoiceRecognitionService : Service() {
 
                     speakWakeThenEnterCommandMode()
                 } else {
-                    Log.i("WAKEWORD", "Wake verification FAILED: '$chunk' -> back to wake")
-                    rejectWakeAndReturn("no_match")
+                    // Soft sensitivity: if recognizer heard any speech after wake beep,
+                    // treat it as user's command start and do not drop the session.
+                    if (chunk.isNotBlank()) {
+                        Log.i("WAKEWORD", "Wake verification no_match but speech detected: '$chunk' -> command mode")
+                        proceedToCommandMode("speech_detected_no_wake_match")
+                    } else {
+                        Log.i("WAKEWORD", "Wake verification FAILED: empty final -> back to wake")
+                        rejectWakeAndReturn("no_match_empty")
+                    }
                 }
             }
 
