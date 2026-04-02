@@ -110,10 +110,12 @@ class VoiceRecognitionService : Service() {
     // Optional guard (kept for future): after wake triggers, you can quickly verify the phrase via SpeechRecognizer.
     // For Vosk keyword spotting we usually don't need it, but the helpers stay useful.
     private var isWakeVerificationMode: Boolean = false
-    private val wakeVerifyTimeoutMs: Long = 1200L
+    private val wakeVerifyTimeoutMs: Long = 2200L
     private val wakeVerifyPhrases: List<String> = listOf(
         "соня прием",
         "соня приём",
+        // Soft sensitivity boost: some recognizers return only the first token.
+        "соня",
     )
 
     // Фразы управления во время диктовки команды:
