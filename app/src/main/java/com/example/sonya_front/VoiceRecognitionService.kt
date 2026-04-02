@@ -129,6 +129,8 @@ class VoiceRecognitionService : Service() {
         "отбой",
         "стоп",
     )
+    private val wakeResponseEchoIgnoreWindowMs: Long = 3000L
+    private var ignoreWakeResponseEchoUntilMs: Long = 0L
 
     private var wakeLock: PowerManager.WakeLock? = null
     private var isWakeWordRunning: Boolean = false
@@ -327,6 +329,11 @@ class VoiceRecognitionService : Service() {
 
                     val chunk = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
                     if (!chunk.isNullOrBlank()) {
+                        if (shouldIgnoreWakeResponseEcho(chunk)) {
+                            Log.i("SPEECH_RECOGNIZER", "Ignore wake response echo in final result: '$chunk'")
+                            startListeningChunk(delayMs = 120L)
+                            return
+                        }
                         markActivity()
 
                         // 1) Отмена команды: "отбой"/"стоп" -> ничего не отправляем, возвращаемся в режим ожидания.
@@ -375,6 +382,10 @@ class VoiceRecognitionService : Service() {
                      if (!isContinuousListening) return
                     val partialChunk = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
                     if (!partialChunk.isNullOrBlank()) {
+                        if (shouldIgnoreWakeResponseEcho(partialChunk)) {
+                            Log.i("SPEECH_RECOGNIZER", "Ignore wake response echo in partial result: '$partialChunk'")
+                            return
+                        }
                         markActivity()
                         // ВАЖНО: не перетирать lastPartialForSend до проверки cancel/finish,
                         // иначе partial="спасибо" может затереть ранее распознанный текст команды.
@@ -469,6 +480,27 @@ class VoiceRecognitionService : Service() {
             val p = phrase.lowercase(Locale.getDefault())
             norm.contains(p)
         }
+    }
+
+    private fun normalizeRecognizedText(text: String): String {
+        return text
+            .lowercase(Locale.getDefault())
+            .replace('ё', 'е')
+            .replace(Regex("[^\\p{L}\\p{Nd}\\s]+"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    private fun shouldIgnoreWakeResponseEcho(text: String): Boolean {
+        if (SystemClock.elapsedRealtime() > ignoreWakeResponseEchoUntilMs) return false
+        if (combinedTextBuilder.isNotBlank()) return false
+        val norm = normalizeRecognizedText(text)
+        if (norm.isBlank()) return false
+        return VoiceResponsesConfig.getWakeResponses(applicationContext)
+            .asSequence()
+            .map(::normalizeRecognizedText)
+            .filter { it.isNotBlank() }
+            .any { it == norm }
     }
 
     private fun startWakeVerificationThenCommand() {
@@ -1291,6 +1323,7 @@ class VoiceRecognitionService : Service() {
     private fun enterCommandMode() {
         isWakeVerificationMode = false
         isContinuousListening = true
+        ignoreWakeResponseEchoUntilMs = SystemClock.elapsedRealtime() + wakeResponseEchoIgnoreWindowMs
         broadcastCommandModeState(true)
         cancelFinalize()
         lastActivityAtMs = SystemClock.elapsedRealtime()
@@ -1385,6 +1418,7 @@ class VoiceRecognitionService : Service() {
     private fun abortCommandMode(hint: String, voice: String? = null) {
         combinedTextBuilder.clear()
         lastPartialForSend = ""
+        ignoreWakeResponseEchoUntilMs = 0L
         broadcastHint(hint)
         // Optional voice feedback (e.g. when user said "отбой").
         if (!voice.isNullOrBlank()) {
@@ -1450,6 +1484,7 @@ class VoiceRecognitionService : Service() {
             broadcastHint("Пустой результат распознавания: команда не распознана.")
         }
         lastPartialForSend = ""
+        ignoreWakeResponseEchoUntilMs = 0L
         isContinuousListening = false
         cancelFinalize()
         stopSpeechRecognizerSafely()
