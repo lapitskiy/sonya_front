@@ -102,6 +102,7 @@ class VoiceRecognitionService : Service() {
     @Volatile private var ttsReady: Boolean = false
 
     private var watchConnReceiver: BroadcastReceiver? = null
+    private var lastWatchConnectedState: Boolean? = null
 
     // Wake reaction phrase should be spoken BEFORE recording; we enter command mode only after TTS completes.
     @Volatile private var wakeTtsUtteranceId: String? = null
@@ -1306,10 +1307,16 @@ class VoiceRecognitionService : Service() {
 
     private fun registerWatchConnectionReceiver() {
         if (watchConnReceiver != null) return
+        lastWatchConnectedState = WatchConnectionStore.isConnected(applicationContext)
         val r = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 if (intent?.action != WatchConnectionStore.ACTION_WATCH_CONNECTION_CHANGED) return
                 updateForegroundNotification()
+                val connected = intent.getBooleanExtra(
+                    WatchConnectionStore.EXTRA_CONNECTED,
+                    WatchConnectionStore.isConnected(applicationContext)
+                )
+                handleWatchConnectionChanged(connected)
             }
         }
         watchConnReceiver = r
@@ -1329,11 +1336,22 @@ class VoiceRecognitionService : Service() {
     private fun unregisterWatchConnectionReceiver() {
         val r = watchConnReceiver ?: return
         watchConnReceiver = null
+        lastWatchConnectedState = null
         try {
             unregisterReceiver(r)
         } catch (_: Throwable) {
             // ignore
         }
+    }
+
+    private fun handleWatchConnectionChanged(connected: Boolean) {
+        val wasConnected = lastWatchConnectedState
+        lastWatchConnectedState = connected
+        if (!connected || wasConnected == true) return
+        vibrateVoiceAck()
+        val phrase = VoiceResponsesConfig.pickWakeResponse(applicationContext)
+        speakOnMain(phrase, queueMode = TextToSpeech.QUEUE_ADD)
+        broadcastHint("Часы подключены: нажми кнопку на часах и говори.")
     }
 
     private fun enterCommandMode() {
