@@ -106,6 +106,7 @@ class VoiceRecognitionService : Service() {
     @Volatile private var wakeTtsUtteranceId: String? = null
     @Volatile private var wakeAfterTts: Runnable? = null
     private var wakeAfterTtsFallback: Runnable? = null
+    @Volatile private var wakeTransitionStarted: Boolean = false
 
     // Optional guard (kept for future): after wake triggers, you can quickly verify the phrase via SpeechRecognizer.
     // For Vosk keyword spotting we usually don't need it, but the helpers stay useful.
@@ -503,9 +504,19 @@ class VoiceRecognitionService : Service() {
             .any { it == norm }
     }
 
+    private fun beginWakeTransitionOnce(reason: String): Boolean {
+        if (wakeTransitionStarted) {
+            Log.w("WAKEWORD", "Duplicate wake transition ignored ($reason)")
+            return false
+        }
+        wakeTransitionStarted = true
+        return true
+    }
+
     private fun startWakeVerificationThenCommand() {
         // Called right after wakeword triggers. We enter command mode only if
         // "соня прием" is confirmed by a short second-pass recognition.
+        wakeTransitionStarted = false
         isWakeVerificationMode = true
         isContinuousListening = true
         cancelFinalize()
@@ -527,6 +538,7 @@ class VoiceRecognitionService : Service() {
 
         fun proceedToCommandMode(reason: String) {
             // Soft guard: if quick verification timed out/errored, don't block normal UX.
+            if (!beginWakeTransitionOnce("proceed:$reason")) return
             Log.i("WAKEWORD", "Wake verification fallback to command mode ($reason)")
             isWakeVerificationMode = false
             isContinuousListening = false
@@ -546,6 +558,7 @@ class VoiceRecognitionService : Service() {
             override fun onPartialResults(partialResults: Bundle?) {
                 val chunk = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: return
                 if (matchesWakePhrase(chunk)) {
+                    if (!beginWakeTransitionOnce("partial:$chunk")) return
                     Log.i("WAKEWORD", "Wake verification OK (partial): '$chunk'")
                     isWakeVerificationMode = false
 
@@ -562,6 +575,7 @@ class VoiceRecognitionService : Service() {
             override fun onResults(results: Bundle?) {
                 val chunk = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
                 if (matchesWakePhrase(chunk)) {
+                    if (!beginWakeTransitionOnce("final:$chunk")) return
                     Log.i("WAKEWORD", "Wake verification OK (final): '$chunk'")
                     isWakeVerificationMode = false
 
@@ -1682,6 +1696,7 @@ class VoiceRecognitionService : Service() {
     }
 
     private fun startWakeWordDelayed(delayMs: Long) {
+        wakeTransitionStarted = false
         isContinuousListening = false
         broadcastCommandModeState(false)
         cancelFinalize()
