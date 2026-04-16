@@ -30,8 +30,7 @@
 static const char *TAG = "main";
 
 #define REC_MAX_SEC 30
-#define AUTO_OFF_NO_TRANSFER_MS (5U * 60U * 1000U)
-#define AUTO_OFF_AFTER_TRANSFER_MS (2U * 60U * 1000U)
+#define AUTO_POWER_OFF_IDLE_MS (30U * 1000U)
 
 static int s_rec_seconds = CONFIG_REC_SECONDS;
 static volatile bool s_is_recording = false;
@@ -43,7 +42,7 @@ static TickType_t s_last_pwrmon_tick = 0;
 static int s_last_pwrmon_bmv = -1;
 static TickType_t s_last_rec_end_tick = 0;
 static TickType_t s_boot_tick = 0;
-static TickType_t s_last_ble_transfer_tick = 0;
+static TickType_t s_last_activity_tick = 0;
 static bool s_auto_off_attempted = false;
 
 static void send_batt_status(const char *reason)
@@ -182,60 +181,45 @@ static bool btn_released_stable_ms(int stable_ms)
 #endif
 }
 
-static void mark_ble_transfer_activity(const char *reason)
+static void mark_user_activity(const char *reason)
 {
-    s_last_ble_transfer_tick = xTaskGetTickCount();
-    ESP_LOGI(TAG, "AUTO_OFF: transfer activity (%s)", reason ? reason : "n/a");
+    s_last_activity_tick = xTaskGetTickCount();
+    s_auto_off_attempted = false;
+    ESP_LOGI(TAG, "AUTO_OFF: activity (%s)", reason ? reason : "n/a");
 }
 
-static esp_err_t enter_idle_hibernation(void)
+static esp_err_t enter_auto_power_off(void)
 {
-#if defined(CONFIG_WAKE_MODE_BUTTON) || defined(CONFIG_WAKE_MODE_MULTI)
-    const gpio_num_t wake_gpio = (gpio_num_t)CONFIG_WAKE_BUTTON_GPIO;
-#if defined(CONFIG_WAKE_BUTTON_ACTIVE_HIGH)
-    const int wake_level = 1;
-#else
-    const int wake_level = 0;
-#endif
-    esp_err_t err = esp_sleep_enable_ext0_wakeup(wake_gpio, wake_level);
+    ESP_LOGW(TAG, "AUTO_OFF: entering PMU power off");
+    sonya_diaglog_add("sys", "auto_power_off");
+    vTaskDelay(pdMS_TO_TICKS(30));
+    esp_err_t err = sonya_board_power_off();
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "AUTO_OFF: ext0 wake cfg failed gpio=%d level=%d err=%d",
-                 (int)wake_gpio, wake_level, (int)err);
         return err;
     }
-    ESP_LOGW(TAG, "AUTO_OFF: entering deep sleep (wake gpio=%d level=%d)",
-             (int)wake_gpio, wake_level);
-    sonya_diaglog_addf("sys", "auto_sleep gpio=%d lvl=%d", (int)wake_gpio, wake_level);
-    vTaskDelay(pdMS_TO_TICKS(30));
-    esp_deep_sleep_start();
-    return ESP_OK;
-#else
-    ESP_LOGE(TAG, "AUTO_OFF: no button wake mode, deep sleep disabled");
-    return ESP_ERR_NOT_SUPPORTED;
-#endif
+    vTaskDelay(pdMS_TO_TICKS(200));
+    ESP_LOGE(TAG, "AUTO_OFF: PMU power off returned but device still running");
+    return ESP_FAIL;
 }
 
 static void maybe_auto_power_off(TickType_t now)
 {
     if (s_auto_off_attempted || s_is_recording) return;
 
-    const TickType_t timeout_ticks = pdMS_TO_TICKS(
-        (s_last_ble_transfer_tick == 0) ? AUTO_OFF_NO_TRANSFER_MS : AUTO_OFF_AFTER_TRANSFER_MS
-    );
-    const TickType_t ref_tick = (s_last_ble_transfer_tick == 0) ? s_boot_tick : s_last_ble_transfer_tick;
+    const TickType_t timeout_ticks = pdMS_TO_TICKS(AUTO_POWER_OFF_IDLE_MS);
+    const TickType_t ref_tick = (s_last_activity_tick != 0) ? s_last_activity_tick : s_boot_tick;
 
     if (ref_tick == 0 || (now - ref_tick) < timeout_ticks) return;
 
     s_auto_off_attempted = true;
     uint32_t idle_ms = (uint32_t)((now - ref_tick) * portTICK_PERIOD_MS);
-    ESP_LOGW(TAG, "AUTO_OFF: timeout reached (idle_ms=%lu, had_transfer=%d)",
-             (unsigned long)idle_ms, s_last_ble_transfer_tick == 0 ? 0 : 1);
-    sonya_diaglog_addf("sys", "auto_off idle_ms=%lu tx=%d",
-                       (unsigned long)idle_ms, s_last_ble_transfer_tick == 0 ? 0 : 1);
+    ESP_LOGW(TAG, "AUTO_OFF: timeout reached -> PMU off (idle_ms=%lu)",
+             (unsigned long)idle_ms);
+    sonya_diaglog_addf("sys", "auto_off idle_ms=%lu", (unsigned long)idle_ms);
 
-    status_ui_show_message("SLEEP", 700);
+    status_ui_show_message("OFF", 700);
     if (sonya_ble_is_connected()) {
-        sonya_ble_send_evt_error("AUTO_SLEEP:IDLE");
+        sonya_ble_send_evt_error("AUTO_POWEROFF:IDLE");
     }
     if (s_audio_streaming) {
         audio_cap_stop();
@@ -244,10 +228,10 @@ static void maybe_auto_power_off(TickType_t now)
     (void)sonya_ble_set_conn_power_save(true);
     vTaskDelay(pdMS_TO_TICKS(60));
 
-    esp_err_t off_err = enter_idle_hibernation();
+    esp_err_t off_err = enter_auto_power_off();
     if (off_err != ESP_OK) {
-        ESP_LOGE(TAG, "AUTO_OFF: deep sleep failed: %d", (int)off_err);
-        sonya_diaglog_addf("sys", "auto_sleep fail=%d", (int)off_err);
+        ESP_LOGE(TAG, "AUTO_OFF: PMU power off failed: %d", (int)off_err);
+        sonya_diaglog_addf("sys", "auto_power_off fail=%d", (int)off_err);
         status_ui_set_error(true);
     }
 }
@@ -261,6 +245,7 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
     uint32_t off = 0;
     uint16_t want_len = 0;
     proto_cmd_t cmd = proto_parse_rx_cmd(data, len, &setrec_val, &rec_id, &off, &want_len);
+    mark_user_activity("BLE_RX");
 
     switch (cmd) {
     case PROTO_CMD_PING:
@@ -294,11 +279,9 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
         }
         break;
     case PROTO_CMD_GET:
-        mark_ble_transfer_activity("GET");
         pull_stream_handle_get(rec_id, off, want_len);
         break;
     case PROTO_CMD_DONE:
-        mark_ble_transfer_activity("DONE");
         if (s_is_recording) {
             ESP_LOGW(TAG, "RX: DONE ignored while recording (id=%u cur_id=%u)",
                      (unsigned)rec_id, (unsigned)rec_store_cur_id());
@@ -682,6 +665,7 @@ void app_main(void)
     status_ui_set_recording(false);
 
     s_boot_tick = xTaskGetTickCount();
+    s_last_activity_tick = s_boot_tick;
     TickType_t boot_ready = xTaskGetTickCount() + pdMS_TO_TICKS(2000);
 
     for (;;) {
@@ -717,7 +701,17 @@ void app_main(void)
             ESP_LOGW(TAG, "wake ignored: already recording");
             continue;
         }
+        bool by_btn =
+#if defined(CONFIG_WAKE_MODE_BUTTON)
+            true;
+#elif defined(CONFIG_WAKE_MODE_MULTI)
+            wake_triggered_by_button();
+#else
+            false;
+#endif
+
         s_is_recording = true;
+        mark_user_activity(by_btn ? "BUTTON" : "WAKE");
 
         if (!s_audio_initialized) {
             ESP_LOGW(TAG, "wake ignored: NO_MIC mode");
@@ -729,15 +723,6 @@ void app_main(void)
             s_is_recording = false;
             continue;
         }
-
-        bool by_btn =
-#if defined(CONFIG_WAKE_MODE_BUTTON)
-            true;
-#elif defined(CONFIG_WAKE_MODE_MULTI)
-            wake_triggered_by_button();
-#else
-            false;
-#endif
 
         ESP_LOGI(TAG, "wake detected, confidence=%u", wake_get_confidence());
         ESP_LOGI(TAG, "wake src: by_btn=%d (ble=%d)", by_btn ? 1 : 0, sonya_ble_is_connected() ? 1 : 0);
