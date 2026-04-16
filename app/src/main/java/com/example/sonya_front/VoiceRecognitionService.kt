@@ -1479,6 +1479,18 @@ class VoiceRecognitionService : Service() {
         finalizeRequestedByFinishPhrase = null
 
         val finalText = combinedTextBuilder.toString().trim()
+        // Leave command mode immediately so no extra callbacks/TTS overlap can keep
+        // the session "alive" after a finish phrase like "спасибо".
+        lastPartialForSend = ""
+        ignoreWakeResponseEchoUntilMs = 0L
+        isContinuousListening = false
+        cancelFinalize()
+        stopSpeechRecognizerSafely()
+        // Важно: на некоторых девайсах SpeechRecognizer держит микрофон даже после cancel/stop.
+        // Поэтому destroy() перед возвратом к wake word.
+        destroySpeechRecognizerSafely()
+        broadcastCommandModeState(false)
+
         if (finalText.isNotBlank()) {
             Log.d("SPEECH_RECOGNIZER", "Final stitched result: '$finalText'")
             // Unified path for any recognized text.
@@ -1497,14 +1509,6 @@ class VoiceRecognitionService : Service() {
             )
             broadcastHint("Пустой результат распознавания: команда не распознана.")
         }
-        lastPartialForSend = ""
-        ignoreWakeResponseEchoUntilMs = 0L
-        isContinuousListening = false
-        cancelFinalize()
-        stopSpeechRecognizerSafely()
-        // Важно: на некоторых девайсах SpeechRecognizer держит микрофон даже после cancel/stop.
-        // Поэтому destroy() перед возвратом к wake word.
-        destroySpeechRecognizerSafely()
         // Give TTS a moment; also reduces chance of wake-word engine catching our own speech.
         startWakeWordDelayed(1200L)
     }
