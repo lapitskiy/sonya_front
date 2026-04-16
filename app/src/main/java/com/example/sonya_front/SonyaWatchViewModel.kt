@@ -447,6 +447,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                     if (m == "PONG" && readyVibrationPending) {
                         readyVibrationPending = false
                         vibrateReadyPulse()
+                        speakWatchReadyPhrase()
                     }
                 } else {
                     appendLog("watch error: '$m'")
@@ -807,6 +808,21 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
             appendLog("haptic: ready pulse")
         } catch (t: Throwable) {
             appendLog("haptic failed: ${t.javaClass.simpleName}: ${t.message}")
+        }
+    }
+
+    private fun speakWatchReadyPhrase() {
+        try {
+            val ctx = getApplication<Application>().applicationContext
+            val phrase = VoiceResponsesConfig.pickWakeResponse(ctx)
+            val intent = Intent(ctx, VoiceRecognitionService::class.java).apply {
+                action = VoiceRecognitionService.ACTION_SPEAK
+                putExtra(VoiceRecognitionService.EXTRA_SPEAK_TEXT, phrase)
+            }
+            ContextCompat.startForegroundService(ctx, intent)
+            appendLog("tts: ready phrase '$phrase'")
+        } catch (t: Throwable) {
+            appendLog("tts ready failed: ${t.javaClass.simpleName}: ${t.message}")
         }
     }
 
