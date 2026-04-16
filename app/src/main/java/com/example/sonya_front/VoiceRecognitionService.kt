@@ -71,6 +71,7 @@ class VoiceRecognitionService : Service() {
     private var wakeWordEngine: VoskWakeWordEngine? = null
     private var speechRecognizer: SpeechRecognizer? = null
     private var recognitionListener: RecognitionListener? = null
+    private var commandRecognitionListener: RecognitionListener? = null
     private lateinit var fusedLocationClient: FusedLocationProviderClient
 
     // Keep a recent location cached so background wake/commands can attach coords reliably.
@@ -434,6 +435,7 @@ class VoiceRecognitionService : Service() {
 
                 override fun onEvent(eventType: Int, params: Bundle?) {}
             }
+            commandRecognitionListener = listener
             recognitionListener = listener
             ensureSpeechRecognizer()
             speechRecognizer?.setRecognitionListener(listener)
@@ -1352,7 +1354,10 @@ class VoiceRecognitionService : Service() {
         // Fresh recognizer instance helps avoid "busy" edge cases after switching audio users.
         destroySpeechRecognizerSafely()
         ensureSpeechRecognizer()
-        recognitionListener?.let { speechRecognizer?.setRecognitionListener(it) }
+        commandRecognitionListener?.let {
+            recognitionListener = it
+            speechRecognizer?.setRecognitionListener(it)
+        }
 
         broadcastStatusUpdate("Слушаю вашу команду...")
         // Start ASAP to avoid missing the first word after wake.
