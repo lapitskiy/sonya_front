@@ -22,6 +22,9 @@
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "status_ui.h"
+#include "link_state.h"
+#include "power_mgr.h"
+#include "button_policy.h"
 #include "sdkconfig.h"
 #include "sonya_board.h"
 #include "esp_system.h"
@@ -43,15 +46,11 @@ static bool s_audio_streaming = false;
 static TickType_t s_last_pwrmon_tick = 0;
 static int s_last_pwrmon_bmv = -1;
 static TickType_t s_last_rec_end_tick = 0;
-static TickType_t s_boot_tick = 0;
-static TickType_t s_last_activity_tick = 0;
-static bool s_auto_off_attempted = false;
 static bool s_time_received = false;
-static bool s_last_ble_connected = false;
 
 static void send_batt_status(const char *reason)
 {
-    if (!sonya_ble_is_connected()) return;
+    if (!link_state_is_connected()) return;
     int batt_pct = -1;
     uint16_t batt_mv = 0;
     uint16_t vbus_mv = 0;
@@ -106,14 +105,14 @@ static void pwrmon_tick(void)
              "PWRMON: pct=%d bmv=%u vbus=%u in=%d chg=%d bat=%d ble=%d rec=%d mic=%d dmv=%d rate=%d mV/min",
              batt_pct, (unsigned)batt_mv, (unsigned)vbus_mv,
              vbus_in ? 1 : 0, charging ? 1 : 0, battery_present ? 1 : 0,
-             sonya_ble_is_connected() ? 1 : 0,
+             link_state_is_connected() ? 1 : 0,
              s_is_recording ? 1 : 0,
              s_audio_streaming ? 1 : 0,
              dmv, mv_per_min);
 
     sonya_diaglog_addf("pwr", "bmv=%u dmv=%d r=%d ble=%d rec=%d mic=%d",
                        (unsigned)batt_mv, dmv, mv_per_min,
-                       sonya_ble_is_connected() ? 1 : 0,
+                       link_state_is_connected() ? 1 : 0,
                        s_is_recording ? 1 : 0,
                        s_audio_streaming ? 1 : 0);
 
@@ -185,20 +184,6 @@ static bool btn_released_stable_ms(int stable_ms)
 #endif
 }
 
-static void mark_user_activity(const char *reason)
-{
-    s_last_activity_tick = xTaskGetTickCount();
-    s_auto_off_attempted = false;
-    ESP_LOGI(TAG, "AUTO_OFF: activity (%s)", reason ? reason : "n/a");
-}
-
-static void update_ble_activity(bool connected)
-{
-    if (connected == s_last_ble_connected) return;
-    s_last_ble_connected = connected;
-    mark_user_activity(connected ? "BLE_CONNECT" : "BLE_DISCONNECT");
-}
-
 static esp_err_t enter_auto_power_off(void)
 {
     ESP_LOGW(TAG, "AUTO_OFF: entering PMU power off");
@@ -215,25 +200,10 @@ static esp_err_t enter_auto_power_off(void)
 
 static void maybe_auto_power_off(TickType_t now)
 {
-    if (s_auto_off_attempted || s_is_recording) return;
-    if (sonya_ble_is_connected()) {
-        s_auto_off_attempted = false;
-        return;
-    }
-
-    const TickType_t timeout_ticks = pdMS_TO_TICKS(AUTO_POWER_OFF_IDLE_MS);
-    const TickType_t ref_tick = (s_last_activity_tick != 0) ? s_last_activity_tick : s_boot_tick;
-
-    if (ref_tick == 0 || (now - ref_tick) < timeout_ticks) return;
-
-    s_auto_off_attempted = true;
-    uint32_t idle_ms = (uint32_t)((now - ref_tick) * portTICK_PERIOD_MS);
-    ESP_LOGW(TAG, "AUTO_OFF: timeout reached -> PMU off (idle_ms=%lu)",
-             (unsigned long)idle_ms);
-    sonya_diaglog_addf("sys", "auto_off idle_ms=%lu", (unsigned long)idle_ms);
+    if (!power_mgr_should_auto_off(now, s_is_recording, link_state_is_connected(), NULL)) return;
 
     status_ui_show_message("OFF", 700);
-    if (sonya_ble_is_connected()) {
+    if (link_state_is_connected()) {
         sonya_ble_send_evt_error("AUTO_POWEROFF:IDLE");
     }
     if (s_audio_streaming) {
@@ -251,6 +221,23 @@ static void maybe_auto_power_off(TickType_t now)
     }
 }
 
+static void sync_link_state_from_ble(void)
+{
+    bool changed = link_state_update_connected(sonya_ble_is_connected());
+    if (changed) {
+        power_mgr_mark_activity(link_state_is_connected() ? "BLE_CONNECT" : "BLE_DISCONNECT");
+    }
+}
+
+static void task_link_state_sync(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        sync_link_state_from_ble();
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
 /* ---- BLE RX handler ---- */
 
 static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
@@ -263,12 +250,13 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
     int16_t tz_offset_min = 0;
     proto_cmd_t cmd = proto_parse_rx_cmd(data, len, &setrec_val, &rec_id, &off, &want_len,
                                          &time_epoch, &tz_offset_min);
-    mark_user_activity("BLE_RX");
+    power_mgr_mark_activity("BLE_RX");
 
     switch (cmd) {
     case PROTO_CMD_PING:
         ESP_LOGI(TAG, "RX: PING");
-        if (sonya_ble_is_connected()) {
+        if (link_state_is_connected()) {
+            link_state_mark_proto_ready("PING");
             sonya_ble_send_evt_error("PONG");
             if (!s_time_received) {
                 sonya_ble_send_evt_error("TIME_REQ");
@@ -289,11 +277,12 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
         };
         if (settimeofday(&tv, NULL) == 0) {
             s_time_received = true;
+            link_state_mark_time_synced();
             status_ui_set_time((time_t)time_epoch, tz_offset_min);
-            if (sonya_ble_is_connected()) {
+            if (link_state_is_connected()) {
                 sonya_ble_send_evt_error("TIME_OK");
             }
-        } else if (sonya_ble_is_connected()) {
+        } else if (link_state_is_connected()) {
             sonya_ble_send_evt_error("TIME_ERR");
         }
         break;
@@ -301,7 +290,7 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
     case PROTO_CMD_REC:
         ESP_LOGI(TAG, "RX: REC (rec_seconds=%d)", s_rec_seconds);
         if (s_no_mic_mode) {
-            if (sonya_ble_is_connected()) {
+            if (link_state_is_connected()) {
                 sonya_ble_send_evt_error("NO_MIC:REC_DISABLED");
             }
             break;
@@ -311,7 +300,7 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
     case PROTO_CMD_SETREC:
         s_rec_seconds = setrec_val;
         ESP_LOGI(TAG, "RX: SETREC -> %d sec", s_rec_seconds);
-        if (sonya_ble_is_connected()) {
+        if (link_state_is_connected()) {
             char msg[32];
             snprintf(msg, sizeof(msg), "REC_SEC=%d", s_rec_seconds);
             sonya_ble_send_evt_error(msg);
@@ -324,7 +313,7 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
         if (s_is_recording) {
             ESP_LOGW(TAG, "RX: DONE ignored while recording (id=%u cur_id=%u)",
                      (unsigned)rec_id, (unsigned)rec_store_cur_id());
-            if (sonya_ble_is_connected()) {
+            if (link_state_is_connected()) {
                 sonya_ble_send_evt_error("DONE_IGN:REC");
             }
             break;
@@ -332,7 +321,7 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
         if (rec_id == rec_store_cur_id()) {
             pull_stream_handle_done(rec_id);
             s_last_rec_end_tick = 0;
-            if (sonya_ble_is_connected()) {
+            if (link_state_is_connected()) {
                 char msg[32];
                 snprintf(msg, sizeof(msg), "DONE_OK:%u", (unsigned)rec_id);
                 sonya_ble_send_evt_error(msg);
@@ -340,7 +329,7 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
         } else {
             ESP_LOGW(TAG, "RX: DONE ignored (stale id=%u cur_id=%u)",
                      (unsigned)rec_id, (unsigned)rec_store_cur_id());
-            if (sonya_ble_is_connected()) {
+            if (link_state_is_connected()) {
                 sonya_ble_send_evt_error("DONE_IGN:STALE");
             }
         }
@@ -458,7 +447,7 @@ static void record_button(int want)
                 alloc_failed = true;
                 ESP_LOGE(TAG, "REC_END reason: no mem got=%d", got);
                 status_ui_set_error(true);
-                if (sonya_ble_is_connected())
+                if (link_state_is_connected())
                     sonya_ble_send_evt_error("no mem");
                 break;
             }
@@ -472,7 +461,7 @@ static void record_button(int want)
         if (r < 0) {
             ESP_LOGE(TAG, "REC_END reason: audio_cap_read fail %d (got=%d)", r, got);
             status_ui_set_error(true);
-            if (sonya_ble_is_connected())
+            if (link_state_is_connected())
                 sonya_ble_send_evt_error("audio read fail");
             break;
         }
@@ -523,7 +512,7 @@ static void record_cmd(int cap_sec, int want)
             if (!rec_store_alloc_block()) {
                 ESP_LOGE(TAG, "REC_END reason: no mem got=%d", got);
                 status_ui_set_error(true);
-                if (sonya_ble_is_connected())
+                if (link_state_is_connected())
                     sonya_ble_send_evt_error("no mem");
                 break;
             }
@@ -538,7 +527,7 @@ static void record_cmd(int cap_sec, int want)
         if (r < 0) {
             ESP_LOGE(TAG, "REC_END reason: audio_cap_read fail %d (got=%d)", r, got);
             status_ui_set_error(true);
-            if (sonya_ble_is_connected())
+            if (link_state_is_connected())
                 sonya_ble_send_evt_error("audio read fail");
             break;
         }
@@ -708,16 +697,17 @@ void app_main(void)
 
     status_ui_set_recording(false);
 
-    s_boot_tick = xTaskGetTickCount();
-    s_last_activity_tick = s_boot_tick;
+    link_state_init();
+    power_mgr_init(AUTO_POWER_OFF_IDLE_MS);
+    xTaskCreate(task_link_state_sync, "link_state", 3072, NULL, 5, NULL);
     TickType_t boot_ready = xTaskGetTickCount() + pdMS_TO_TICKS(2000);
 
     for (;;) {
         pwrmon_tick();
         TickType_t loop_now = xTaskGetTickCount();
-        bool ble_connected = sonya_ble_is_connected();
-        update_ble_activity(ble_connected);
-        if (ble_connected &&
+        sync_link_state_from_ble();
+        bool link_connected = link_state_is_connected();
+        if (link_connected &&
             (s_last_batt_sent_tick == 0 || (loop_now - s_last_batt_sent_tick) >= pdMS_TO_TICKS(60000))) {
             send_batt_status("periodic");
         }
@@ -729,13 +719,13 @@ void app_main(void)
         uint16_t pending_id = rec_store_cur_id();
 #if defined(CONFIG_WAKE_MODE_BUTTON) || defined(CONFIG_WAKE_MODE_MULTI)
         ESP_LOGI(TAG, "wake trig: ticks=%lu ble=%d gpio=%d rec=%d audio=%d pending_bytes=%d pending_id=%u",
-                 (unsigned long)now, sonya_ble_is_connected() ? 1 : 0,
+                 (unsigned long)now, link_connected ? 1 : 0,
                  gpio_get_level(CONFIG_WAKE_BUTTON_GPIO),
                  s_is_recording ? 1 : 0, s_audio_streaming ? 1 : 0,
                  pending_bytes, (unsigned)pending_id);
 #else
         ESP_LOGI(TAG, "wake trig: ticks=%lu ble=%d rec=%d audio=%d pending_bytes=%d pending_id=%u",
-                 (unsigned long)now, sonya_ble_is_connected() ? 1 : 0,
+                 (unsigned long)now, link_connected ? 1 : 0,
                  s_is_recording ? 1 : 0, s_audio_streaming ? 1 : 0,
                  pending_bytes, (unsigned)pending_id);
 #endif
@@ -755,12 +745,12 @@ void app_main(void)
 #endif
 
         s_is_recording = true;
-        mark_user_activity(by_btn ? "BUTTON" : "WAKE");
+        power_mgr_mark_activity(by_btn ? "BUTTON" : "WAKE");
 
         if (!s_audio_initialized) {
             ESP_LOGW(TAG, "wake ignored: NO_MIC mode");
             status_ui_show_message("NOMIC", 1200);
-            if (sonya_ble_is_connected()) {
+            if (link_connected) {
                 sonya_ble_send_evt_wake();
                 sonya_ble_send_evt_error("NO_MIC:REC_DISABLED");
             }
@@ -769,7 +759,7 @@ void app_main(void)
         }
 
         ESP_LOGI(TAG, "wake detected, confidence=%u", wake_get_confidence());
-        ESP_LOGI(TAG, "wake src: by_btn=%d (ble=%d)", by_btn ? 1 : 0, sonya_ble_is_connected() ? 1 : 0);
+        ESP_LOGI(TAG, "wake src: by_btn=%d (link=%s)", by_btn ? 1 : 0, link_state_name(link_state_get()));
         // For button-triggered record: show recording animation immediately (no text overlay).
         if (by_btn) {
             status_ui_set_recording(true);
@@ -777,18 +767,17 @@ void app_main(void)
             ESP_LOGI(TAG, "ui: show 'WAKE' 10s");
             status_ui_show_message("WAKE", 10 * 1000);
         }
-#if defined(CONFIG_WAKE_MODE_BUTTON)
-        if (by_btn && !sonya_ble_is_connected()) {
-            ESP_LOGW(TAG, "button trigger but BLE not connected -> ignore");
+        button_policy_decision_t decision = button_policy_decide(by_btn, link_connected);
+        if (decision != BUTTON_POLICY_RECORD) {
+            ESP_LOGW(TAG, "button policy: %s -> ignore", button_policy_decision_name(decision));
             status_ui_set_error(true);
             status_ui_set_recording(false);
             s_is_recording = false;
             continue;
         }
-#endif
         // Keep only one recording in rec_store at a time.
         // If Android has not sent DONE for the previous record yet, do not overwrite it.
-        if (sonya_ble_is_connected() && rec_store_total_bytes() > 0) {
+        if (link_connected && rec_store_total_bytes() > 0) {
             TickType_t now_tick = xTaskGetTickCount();
             uint32_t age_ms = 0;
             if (s_last_rec_end_tick != 0 && now_tick >= s_last_rec_end_tick) {
@@ -803,7 +792,7 @@ void app_main(void)
             }
         }
 
-        if (sonya_ble_is_connected() && rec_store_total_bytes() > 0) {
+        if (link_connected && rec_store_total_bytes() > 0) {
             // Robustness for real usage: if host missed DONE/ack, do not block the next
             // button recording forever. Replace stale pending record on new trigger.
             ESP_LOGW(TAG, "dropping pending record before new rec (bytes=%d id=%u by_btn=%d)",
@@ -812,7 +801,7 @@ void app_main(void)
             s_last_rec_end_tick = 0;
         }
 
-        if (sonya_ble_is_connected())
+        if (link_connected)
             sonya_ble_send_evt_wake();
 
         int cap_sec;
@@ -848,10 +837,10 @@ void app_main(void)
 
         ESP_LOGI(TAG, "REC_START cap=%d sec sr=%d want=%d", cap_sec, sr, want);
         ESP_LOGI(TAG, "REC_FLOW start: ble=%d by_btn=%d pending_before=%d id_before=%u",
-                 sonya_ble_is_connected() ? 1 : 0, by_btn ? 1 : 0,
+                 link_connected ? 1 : 0, by_btn ? 1 : 0,
                  rec_store_total_bytes(), (unsigned)rec_store_cur_id());
         sonya_diaglog_addf("rec", "start cap=%d sr=%d ble=%d",
-                           cap_sec, sr, sonya_ble_is_connected() ? 1 : 0);
+                           cap_sec, sr, link_connected ? 1 : 0);
         ESP_LOGI(TAG, "ui: recording on (src_btn=%d)", by_btn ? 1 : 0);
         status_ui_set_recording(true);
         status_ui_set_error(false);
@@ -861,7 +850,7 @@ void app_main(void)
             err = audio_cap_start();
             if (err) {
                 ESP_LOGE(TAG, "audio_cap_start (on-demand) fail %d", err);
-                if (sonya_ble_is_connected()) sonya_ble_send_evt_error("audio start fail");
+                if (link_state_is_connected()) sonya_ble_send_evt_error("audio start fail");
                 status_ui_set_error(true);
                 status_ui_set_recording(false);
                 s_is_recording = false;
@@ -875,7 +864,7 @@ void app_main(void)
 
         uint16_t rid = rec_store_begin();
 
-        if (sonya_ble_is_connected()) {
+        if (link_state_is_connected()) {
             sonya_ble_send_evt_rec_start();
             pull_stream_start_live(rid);
         }
@@ -919,7 +908,7 @@ void app_main(void)
 
         status_ui_set_recording(false);
 
-        if (sonya_ble_is_connected()) {
+        if (link_state_is_connected()) {
             int meta_rc = send_rec_end_meta();
             ESP_LOGI(TAG, "REC_END meta send rc=%d: id=%u bytes=%d",
                      meta_rc, (unsigned)rec_store_cur_id(), rec_store_total_bytes());

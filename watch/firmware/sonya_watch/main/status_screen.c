@@ -1,6 +1,6 @@
 #include "status_screen.h"
 
-#include "sonya_ble.h"
+#include "link_state.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -401,7 +401,7 @@ static void task_screen(void *arg)
     bool first = true;
 
     for (;;) {
-        bool conn = sonya_ble_is_connected();
+        bool conn = link_state_is_connected();
         bool app_ready = s_app_ready;
         bool rec = s_recording;
         bool err = s_error;
@@ -462,7 +462,7 @@ void status_screen_set_app_ready(bool ready)
 {
     s_app_ready = ready;
     if (s_panel) {
-        esp_err_t e = render_main_status(sonya_ble_is_connected(), ready, s_recording, s_error);
+        esp_err_t e = render_main_status(link_state_is_connected(), ready, s_recording, s_error);
         if (e != ESP_OK) ESP_LOGW(TAG, "render app_ready failed: %s", esp_err_to_name(e));
     }
 }
@@ -473,7 +473,7 @@ void status_screen_set_time(time_t epoch, int16_t tz_offset_min)
     s_tz_offset_min = tz_offset_min;
     s_time_synced = true;
     if (s_panel) {
-        esp_err_t e = render_main_status(sonya_ble_is_connected(), s_app_ready, s_recording, s_error);
+        esp_err_t e = render_main_status(link_state_is_connected(), s_app_ready, s_recording, s_error);
         if (e != ESP_OK) ESP_LOGW(TAG, "render time failed: %s", esp_err_to_name(e));
     }
 }

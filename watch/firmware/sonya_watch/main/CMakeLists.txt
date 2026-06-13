@@ -1,5 +1,11 @@
 idf_component_register(
-    SRCS "app_main.c" "status_ui.c" "status_screen.c"
+    SRCS
+        "app_main.c"
+        "status_ui.c"
+        "status_screen.c"
+        "link_state.c"
+        "power_mgr.c"
+        "button_policy.c"
     INCLUDE_DIRS "."
     REQUIRES
         nvs_flash

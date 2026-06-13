@@ -1,6 +1,6 @@
 #include "status_ui.h"
 
-#include "sonya_ble.h"
+#include "link_state.h"
 #include "status_screen.h"
 #include "ui_lvgl.h"
 #include "freertos/FreeRTOS.h"
@@ -16,12 +16,13 @@ static int s_active = 1;
 static volatile bool s_recording = false;
 static volatile bool s_error = false;
 
+#if defined(CONFIG_UI_LVGL_ENABLE)
 static void task_ui_conn(void *arg)
 {
     (void)arg;
     bool last = false;
     for (;;) {
-        bool conn = sonya_ble_is_connected();
+        bool conn = link_state_is_connected();
         if (conn != last) {
             ui_lvgl_set_connected(conn);
             last = conn;
@@ -29,6 +30,7 @@ static void task_ui_conn(void *arg)
         vTaskDelay(pdMS_TO_TICKS(250));
     }
 }
+#endif
 
 static inline void led_write(bool on)
 {
@@ -126,7 +128,7 @@ static void task_led(void *arg)
             continue;
         }
 
-        bool conn = sonya_ble_is_connected();
+        bool conn = link_state_is_connected();
         if (s_recording) {
             // Fast blink while recording.
             led_write(true);

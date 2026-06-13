@@ -71,14 +71,7 @@ object SonyaWatchBleManager {
     }
 
     fun sendBackendResult(ctx: Context, ok: Boolean) {
-        val cmd = if (ok) "UI:OK" else "UI:ERR"
-        val c = getClient(ctx)
-        logLine("watch backend result -> $cmd")
-        if (!c.isConnected()) {
-            logLine("watch backend result skipped: BLE not connected")
-            return
-        }
-        c.writeAsciiCommand(cmd)
+        WatchBackendResultSender.send(ctx, ok)
     }
 
     private fun logLine(line: String) {
