@@ -25,6 +25,8 @@
 #include "link_state.h"
 #include "power_mgr.h"
 #include "button_policy.h"
+#include "watch_result_ui.h"
+#include "watch_power.h"
 #include "sdkconfig.h"
 #include "sonya_board.h"
 #include "esp_system.h"
@@ -184,23 +186,15 @@ static bool btn_released_stable_ms(int stable_ms)
 #endif
 }
 
-static esp_err_t enter_auto_power_off(void)
-{
-    ESP_LOGW(TAG, "AUTO_OFF: entering PMU power off");
-    sonya_diaglog_add("sys", "auto_power_off");
-    vTaskDelay(pdMS_TO_TICKS(30));
-    esp_err_t err = sonya_board_power_off();
-    if (err != ESP_OK) {
-        return err;
-    }
-    vTaskDelay(pdMS_TO_TICKS(200));
-    ESP_LOGE(TAG, "AUTO_OFF: PMU power off returned but device still running");
-    return ESP_FAIL;
-}
-
 static void maybe_auto_power_off(TickType_t now)
 {
     if (!power_mgr_should_auto_off(now, s_is_recording, link_state_is_connected(), NULL)) return;
+
+    if (watch_power_usb_present()) {
+        ESP_LOGW(TAG, "AUTO_OFF: USB/VBUS present -> keep running");
+        power_mgr_mark_activity("USB_POWER");
+        return;
+    }
 
     status_ui_show_message("OFF", 700);
     if (link_state_is_connected()) {
@@ -213,20 +207,15 @@ static void maybe_auto_power_off(TickType_t now)
     (void)sonya_ble_set_conn_power_save(true);
     vTaskDelay(pdMS_TO_TICKS(60));
 
-    esp_err_t off_err = enter_auto_power_off();
+    esp_err_t off_err = watch_power_enter_auto_off();
     if (off_err != ESP_OK) {
-        ESP_LOGE(TAG, "AUTO_OFF: PMU power off failed: %d", (int)off_err);
-        sonya_diaglog_addf("sys", "auto_power_off fail=%d", (int)off_err);
         status_ui_set_error(true);
     }
 }
 
 static void sync_link_state_from_ble(void)
 {
-    bool changed = link_state_update_connected(sonya_ble_is_connected());
-    if (changed) {
-        power_mgr_mark_activity(link_state_is_connected() ? "BLE_CONNECT" : "BLE_DISCONNECT");
-    }
+    (void)link_state_update_connected(sonya_ble_is_connected());
 }
 
 static void task_link_state_sync(void *arg)
@@ -235,6 +224,15 @@ static void task_link_state_sync(void *arg)
     for (;;) {
         sync_link_state_from_ble();
         vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
+static void task_auto_power_off(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        maybe_auto_power_off(xTaskGetTickCount());
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
 
@@ -336,11 +334,11 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
         break;
     case PROTO_CMD_UI_OK:
         ESP_LOGI(TAG, "RX: UI:OK");
-        status_ui_show_ok(900);
+        watch_result_ui_show_backend_result(true);
         break;
     case PROTO_CMD_UI_ERR:
         ESP_LOGI(TAG, "RX: UI:ERR");
-        status_ui_show_message("ERR", 1200);
+        watch_result_ui_show_backend_result(false);
         break;
     default:
         ESP_LOGW(TAG, "RX: unknown cmd (%d bytes)", len);
@@ -700,6 +698,7 @@ void app_main(void)
     link_state_init();
     power_mgr_init(AUTO_POWER_OFF_IDLE_MS);
     xTaskCreate(task_link_state_sync, "link_state", 3072, NULL, 5, NULL);
+    xTaskCreate(task_auto_power_off, "auto_off", 3072, NULL, 5, NULL);
     TickType_t boot_ready = xTaskGetTickCount() + pdMS_TO_TICKS(2000);
 
     for (;;) {
@@ -711,7 +710,6 @@ void app_main(void)
             (s_last_batt_sent_tick == 0 || (loop_now - s_last_batt_sent_tick) >= pdMS_TO_TICKS(60000))) {
             send_batt_status("periodic");
         }
-        maybe_auto_power_off(loop_now);
         bool trig = wake_poll_or_wait(100);
         if (!trig) continue;
         TickType_t now = xTaskGetTickCount();

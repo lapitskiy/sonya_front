@@ -28,11 +28,8 @@ void power_mgr_mark_activity(const char *reason)
 
 bool power_mgr_should_auto_off(TickType_t now, bool recording, bool link_connected, uint32_t *idle_ms_out)
 {
+    (void)link_connected;
     if (recording) return false;
-    if (link_connected) {
-        s_auto_off_attempted = false;
-        return false;
-    }
     if (s_auto_off_attempted) return false;
 
     const TickType_t timeout_ticks = pdMS_TO_TICKS(s_idle_ms);

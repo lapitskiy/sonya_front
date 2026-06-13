@@ -498,6 +498,11 @@ void status_screen_show_message(const char *msg, uint32_t ms)
     }
     s_msg[i] = '\0';
     s_msg_until_tick = xTaskGetTickCount() + pdMS_TO_TICKS(ms);
+    ESP_LOGI(TAG, "show message '%s' ms=%lu", s_msg, (unsigned long)ms);
+    if (s_panel) {
+        esp_err_t e = render_message_screen(s_msg, rgb565(246, 238, 220), rgb565(46, 43, 38));
+        if (e != ESP_OK) ESP_LOGW(TAG, "render message failed: %s", esp_err_to_name(e));
+    }
 }
 
 void status_screen_init(void)

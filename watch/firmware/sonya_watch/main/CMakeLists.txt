@@ -6,6 +6,8 @@ idf_component_register(
         "link_state.c"
         "power_mgr.c"
         "button_policy.c"
+        "watch_result_ui.c"
+        "watch_power.c"
     INCLUDE_DIRS "."
     REQUIRES
         nvs_flash
