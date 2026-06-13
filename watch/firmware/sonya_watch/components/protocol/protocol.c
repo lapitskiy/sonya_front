@@ -46,7 +46,9 @@ proto_cmd_t proto_parse_rx_cmd(const uint8_t *buf, size_t len,
                                int *out_rec_sec,
                                uint16_t *out_rec_id,
                                uint32_t *out_offset,
-                               uint16_t *out_len)
+                               uint16_t *out_len,
+                               uint64_t *out_time_epoch,
+                               int16_t *out_tz_offset_min)
 {
     if (!buf || len == 0) return PROTO_CMD_NONE;
 
@@ -59,6 +61,21 @@ proto_cmd_t proto_parse_rx_cmd(const uint8_t *buf, size_t len,
     if (n >= 4 && memcmp(cmd, "BATT", 4) == 0) return PROTO_CMD_BATT;
     /* Accept "REC" with optional trailing newline/whitespace from BLE apps */
     if (n >= 3 && memcmp(cmd, "REC", 3) == 0) return PROTO_CMD_REC;
+
+    // TIME:<unix_seconds>:<timezone_offset_minutes>
+    if (n >= 12 && memcmp(cmd, "TIME:", 5) == 0) {
+        const char *p = cmd + 5;
+        char *end = NULL;
+        unsigned long long epoch = strtoull(p, &end, 10);
+        if (!end || *end != ':') return PROTO_CMD_NONE;
+        long tz_min = strtol(end + 1, &end, 10);
+        if (!end || (*end != '\0' && *end != '\r' && *end != '\n')) return PROTO_CMD_NONE;
+        if (epoch < 946684800ULL || epoch > 4102444800ULL) return PROTO_CMD_NONE;
+        if (tz_min < -720 || tz_min > 840) return PROTO_CMD_NONE;
+        if (out_time_epoch) *out_time_epoch = (uint64_t)epoch;
+        if (out_tz_offset_min) *out_tz_offset_min = (int16_t)tz_min;
+        return PROTO_CMD_TIME;
+    }
 
     if (n >= 8 && memcmp(cmd, "SETREC:", 7) == 0) {
         int v = atoi(cmd + 7);

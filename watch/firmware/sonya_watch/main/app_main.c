@@ -26,6 +26,8 @@
 #include "sonya_board.h"
 #include "esp_system.h"
 #include "esp_sleep.h"
+#include <sys/time.h>
+#include <time.h>
 
 static const char *TAG = "main";
 
@@ -44,6 +46,7 @@ static TickType_t s_last_rec_end_tick = 0;
 static TickType_t s_boot_tick = 0;
 static TickType_t s_last_activity_tick = 0;
 static bool s_auto_off_attempted = false;
+static bool s_time_received = false;
 
 static void send_batt_status(const char *reason)
 {
@@ -244,7 +247,10 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
     uint16_t rec_id = 0;
     uint32_t off = 0;
     uint16_t want_len = 0;
-    proto_cmd_t cmd = proto_parse_rx_cmd(data, len, &setrec_val, &rec_id, &off, &want_len);
+    uint64_t time_epoch = 0;
+    int16_t tz_offset_min = 0;
+    proto_cmd_t cmd = proto_parse_rx_cmd(data, len, &setrec_val, &rec_id, &off, &want_len,
+                                         &time_epoch, &tz_offset_min);
     mark_user_activity("BLE_RX");
 
     switch (cmd) {
@@ -252,6 +258,10 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
         ESP_LOGI(TAG, "RX: PING");
         if (sonya_ble_is_connected()) {
             sonya_ble_send_evt_error("PONG");
+            if (!s_time_received) {
+                sonya_ble_send_evt_error("TIME_REQ");
+            }
+            status_ui_set_app_ready(true);
             send_batt_status("ping");
         }
         break;
@@ -259,6 +269,23 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
         ESP_LOGI(TAG, "RX: BATT");
         send_batt_status("cmd");
         break;
+    case PROTO_CMD_TIME: {
+        ESP_LOGI(TAG, "RX: TIME epoch=%llu tz=%d", (unsigned long long)time_epoch, (int)tz_offset_min);
+        struct timeval tv = {
+            .tv_sec = (time_t)time_epoch,
+            .tv_usec = 0,
+        };
+        if (settimeofday(&tv, NULL) == 0) {
+            s_time_received = true;
+            status_ui_set_time((time_t)time_epoch, tz_offset_min);
+            if (sonya_ble_is_connected()) {
+                sonya_ble_send_evt_error("TIME_OK");
+            }
+        } else if (sonya_ble_is_connected()) {
+            sonya_ble_send_evt_error("TIME_ERR");
+        }
+        break;
+    }
     case PROTO_CMD_REC:
         ESP_LOGI(TAG, "RX: REC (rec_seconds=%d)", s_rec_seconds);
         if (s_no_mic_mode) {

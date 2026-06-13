@@ -8,7 +8,9 @@
 #include "esp_log.h"
 #include "esp_check.h"
 
+#include <stdio.h>
 #include <stdint.h>
+#include <time.h>
 
 #include "driver/spi_master.h"
 #include "esp_heap_caps.h"
@@ -43,6 +45,9 @@ static esp_lcd_panel_io_handle_t __attribute__((unused)) s_io = NULL;
 
 static volatile bool s_recording = false;
 static volatile bool s_error = false;
+static volatile bool s_app_ready = false;
+static volatile bool s_time_synced = false;
+static volatile int16_t s_tz_offset_min = 0;
 
 // Custom init sequence known to work on Waveshare AMOLED boards with SH8601 controller.
 static const sh8601_lcd_init_cmd_t __attribute__((unused)) lcd_init_cmds[] = {
@@ -57,6 +62,8 @@ static const sh8601_lcd_init_cmd_t __attribute__((unused)) lcd_init_cmds[] = {
     {0x51, (uint8_t[]){0x00}, 1, 10},
     {0x2A, (uint8_t[]){0x00, 0x16, 0x01, 0xAF}, 4, 0},  // Column address set (0x16..0x1AF) -> aligns 410px width with panel
     {0x2B, (uint8_t[]){0x00, 0x00, 0x01, 0xF5}, 4, 0},  // Row address set (0..0x1F5) -> 502px height
+    {0x29, (uint8_t[]){0x00}, 0, 10},                   // Display ON
+    {0x51, (uint8_t[]){0xFF}, 1, 0},                    // Brightness MAX
 };
 
 static inline uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b)
@@ -64,38 +71,64 @@ static inline uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b)
     return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 }
 
-// 5x7 bitmap font: space, A-Z (subset we need). Each char 5 columns x 7 rows, column-major, LSB=top.
+static inline uint16_t panel_rgb565(uint16_t color)
+{
+    return (uint16_t)((color << 8) | (color >> 8));
+}
+
+// 5x7 bitmap font: space, A-Z, 0-9, colon, dash, dot. Column-major, LSB=top.
 #define FONT_W 5
 #define FONT_H 7
 #define FONT_CHAR_W (FONT_W + 1)  // 1px gap
-static const uint8_t font_5x7[15][5] = {
+static const uint8_t font_5x7[][5] = {
     [0]  = {0x00,0x00,0x00,0x00,0x00},  // space
     [1]  = {0x7E,0x11,0x11,0x11,0x7E},  // A
     [2]  = {0x7F,0x49,0x49,0x49,0x36},  // B
     [3]  = {0x3E,0x41,0x41,0x41,0x22},  // C
     [4]  = {0x7F,0x41,0x41,0x22,0x1C},  // D
     [5]  = {0x7F,0x49,0x49,0x49,0x41},  // E
-    [6]  = {0x7F,0x08,0x14,0x22,0x41},  // K
-    [7]  = {0x7F,0x40,0x40,0x40,0x40},  // L
-    [8]  = {0x7F,0x02,0x0C,0x10,0x7F},  // N
-    [9]  = {0x3E,0x41,0x41,0x41,0x3E},  // O
-    [10] = {0x7F,0x09,0x19,0x29,0x46},  // R
-    [11] = {0x70,0x08,0x07,0x08,0x70},  // V
-    [12] = {0x7F,0x08,0x08,0x08,0x7F},  // H
-    [13] = {0x41,0x41,0x7F,0x41,0x41},  // I
-    [14] = {0x07,0x08,0x70,0x08,0x07},  // Y
+    [6]  = {0x7F,0x09,0x09,0x09,0x01},  // F
+    [7]  = {0x3E,0x41,0x49,0x49,0x7A},  // G
+    [8]  = {0x7F,0x08,0x08,0x08,0x7F},  // H
+    [9]  = {0x41,0x41,0x7F,0x41,0x41},  // I
+    [10] = {0x20,0x40,0x41,0x3F,0x01},  // J
+    [11] = {0x7F,0x08,0x14,0x22,0x41},  // K
+    [12] = {0x7F,0x40,0x40,0x40,0x40},  // L
+    [13] = {0x7F,0x02,0x0C,0x02,0x7F},  // M
+    [14] = {0x7F,0x04,0x08,0x10,0x7F},  // N
+    [15] = {0x3E,0x41,0x41,0x41,0x3E},  // O
+    [16] = {0x7F,0x09,0x09,0x09,0x06},  // P
+    [17] = {0x3E,0x41,0x51,0x21,0x5E},  // Q
+    [18] = {0x7F,0x09,0x19,0x29,0x46},  // R
+    [19] = {0x46,0x49,0x49,0x49,0x31},  // S
+    [20] = {0x01,0x01,0x7F,0x01,0x01},  // T
+    [21] = {0x3F,0x40,0x40,0x40,0x3F},  // U
+    [22] = {0x1F,0x20,0x40,0x20,0x1F},  // V
+    [23] = {0x7F,0x20,0x18,0x20,0x7F},  // W
+    [24] = {0x63,0x14,0x08,0x14,0x63},  // X
+    [25] = {0x07,0x08,0x70,0x08,0x07},  // Y
+    [26] = {0x61,0x51,0x49,0x45,0x43},  // Z
+    [27] = {0x3E,0x51,0x49,0x45,0x3E},  // 0
+    [28] = {0x00,0x42,0x7F,0x40,0x00},  // 1
+    [29] = {0x42,0x61,0x51,0x49,0x46},  // 2
+    [30] = {0x21,0x41,0x45,0x4B,0x31},  // 3
+    [31] = {0x18,0x14,0x12,0x7F,0x10},  // 4
+    [32] = {0x27,0x45,0x45,0x45,0x39},  // 5
+    [33] = {0x3C,0x4A,0x49,0x49,0x30},  // 6
+    [34] = {0x01,0x71,0x09,0x05,0x03},  // 7
+    [35] = {0x36,0x49,0x49,0x49,0x36},  // 8
+    [36] = {0x06,0x49,0x49,0x29,0x1E},  // 9
+    [37] = {0x00,0x36,0x36,0x00,0x00},  // :
+    [38] = {0x08,0x08,0x08,0x08,0x08},  // -
+    [39] = {0x00,0x60,0x60,0x00,0x00},  // .
 };
 static int font_char_index(char c) {
     if (c == ' ') return 0;
-    if (c >= 'A' && c <= 'E') return 1 + (c - 'A');
-    if (c == 'H') return 12;
-    if (c == 'I') return 13;
-    if (c == 'K') return 6;
-    if (c == 'L') return 7;
-    if (c >= 'N' && c <= 'O') return 8 + (c - 'N');
-    if (c == 'R') return 10;
-    if (c == 'V') return 11;
-    if (c == 'Y') return 14;
+    if (c >= 'A' && c <= 'Z') return 1 + (c - 'A');
+    if (c >= '0' && c <= '9') return 27 + (c - '0');
+    if (c == ':') return 37;
+    if (c == '-') return 38;
+    if (c == '.') return 39;
     return 0;
 }
 
@@ -106,56 +139,32 @@ static int font_char_index(char c) {
 // Nudge content right/down a bit (user preference). Keep it proportional to the screen.
 #define CONTENT_OFF_X ((LCD_H_RES / 20) + (2 * FONT_CHAR_W * TEXT_SCALE))   // ~5% + ~2 chars
 #define CONTENT_OFF_Y (LCD_V_RES / 40)   // ~2.5%
-#define LOG_MAX_LINES ((LCD_V_RES - CONTENT_OFF_Y) / LINE_H)
 #define LOG_LINE_LEN 24
-
-static char s_log[LOG_MAX_LINES][LOG_LINE_LEN];
-static int s_log_count = 0;   // number of valid lines (<= LOG_MAX_LINES)
-static int s_log_head = 0;    // index of newest line
 
 static char s_msg[LOG_LINE_LEN];
 static volatile TickType_t s_msg_until_tick = 0;
 
-static void log_add(const char *line)
-{
-    if (!line) return;
-    // advance ring
-    s_log_head = (s_log_head + 1) % LOG_MAX_LINES;
-    if (s_log_count < LOG_MAX_LINES) s_log_count++;
-
-    // copy & uppercase (we only have A-Z and space in the font)
-    int i = 0;
-    for (; i < LOG_LINE_LEN - 1 && line[i]; i++) {
-        char c = line[i];
-        if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
-        if ((c >= 'A' && c <= 'Z') || c == ' ') {
-            s_log[s_log_head][i] = c;
-        } else if (c == '_' || c == '-' || c == ':') {
-            s_log[s_log_head][i] = ' ';
-        } else {
-            s_log[s_log_head][i] = ' ';
-        }
-    }
-    s_log[s_log_head][i] = '\0';
-}
-
-static const char *log_get_line(int idx_from_oldest)
-{
-    // idx_from_oldest: 0..s_log_count-1
-    int oldest = (s_log_head - (s_log_count - 1) + LOG_MAX_LINES) % LOG_MAX_LINES;
-    int idx = (oldest + idx_from_oldest) % LOG_MAX_LINES;
-    return s_log[idx];
-}
-
 static esp_err_t draw_solid(uint16_t color565);
+static esp_err_t draw_rect(int x, int y, int w, int h, uint16_t color565);
 
-static esp_err_t draw_line_text(int y, const char *str, uint16_t fg, uint16_t bg)
+static int text_px_width(const char *str, int scale)
+{
+    int n = 0;
+    if (!str) return 0;
+    while (str[n]) n++;
+    if (n <= 0) return 0;
+    return (((n * FONT_CHAR_W) - 1) * scale);
+}
+
+static esp_err_t draw_text_at(int x0, int y, const char *str, int scale, uint16_t fg, uint16_t bg)
 {
     if (!s_panel) return ESP_ERR_INVALID_STATE;
+    if (scale <= 0) return ESP_ERR_INVALID_ARG;
 
     // SH8601: coordinates divisible by 2
     int ys = (y >> 1) << 1;
-    int ye = ((y + LINE_H) >> 1) << 1;
+    int line_h = (FONT_H * scale) + scale;
+    int ye = ((y + line_h) >> 1) << 1;
     if (ye <= ys) ye = ys + 2;
 
     static uint16_t *buf = NULL;
@@ -169,28 +178,29 @@ static esp_err_t draw_line_text(int y, const char *str, uint16_t fg, uint16_t bg
         buf_px = want_px;
     }
 
-    for (size_t i = 0; i < buf_px; i++) buf[i] = bg;
+    const uint16_t bg_panel = panel_rgb565(bg);
+    const uint16_t fg_panel = panel_rgb565(fg);
+    for (size_t i = 0; i < buf_px; i++) buf[i] = bg_panel;
 
     if (str) {
-        int x0 = LINE_MARGIN_X + CONTENT_OFF_X;
         x0 = (x0 >> 1) << 1;
         for (int ci = 0; str[ci]; ci++) {
             int idx = font_char_index(str[ci]);
-            int cx = x0 + ci * (FONT_CHAR_W * TEXT_SCALE);
+            int cx = x0 + ci * (FONT_CHAR_W * scale);
             for (int col = 0; col < FONT_W; col++) {
                 uint8_t bits = font_5x7[idx][col];
                 for (int row = 0; row < FONT_H; row++) {
                     if (bits & (1u << row)) {
-                        int px0 = cx + col * TEXT_SCALE;
-                        int py0 = (row * TEXT_SCALE);
-                        for (int dy = 0; dy < TEXT_SCALE; dy++) {
+                        int px0 = cx + col * scale;
+                        int py0 = (row * scale);
+                        for (int dy = 0; dy < scale; dy++) {
                             int py = py0 + dy;
                             if (py < 0 || py >= h) continue;
                             uint16_t *dst = &buf[(size_t)py * (size_t)LCD_H_RES];
-                            for (int dx = 0; dx < TEXT_SCALE; dx++) {
+                            for (int dx = 0; dx < scale; dx++) {
                                 int px = px0 + dx;
                                 if (px < 0 || px >= LCD_H_RES) continue;
-                                dst[px] = fg;
+                                dst[px] = fg_panel;
                             }
                         }
                     }
@@ -202,26 +212,134 @@ static esp_err_t draw_line_text(int y, const char *str, uint16_t fg, uint16_t bg
     return esp_lcd_panel_draw_bitmap(s_panel, 0, ys, LCD_H_RES, ye, buf);
 }
 
-static esp_err_t render_log_screen(uint16_t fg, uint16_t bg)
+static esp_err_t draw_line_text(int y, const char *str, uint16_t fg, uint16_t bg)
 {
-    // Clear full screen quickly (chunked), then draw each log line.
-    ESP_RETURN_ON_ERROR(draw_solid(bg), TAG, "draw_solid");
+    return draw_text_at(LINE_MARGIN_X + CONTENT_OFF_X, y, str, TEXT_SCALE, fg, bg);
+}
 
-    int visible = s_log_count;
-    if (visible > LOG_MAX_LINES) visible = LOG_MAX_LINES;
-    for (int i = 0; i < visible; i++) {
-        int y = CONTENT_OFF_Y + i * LINE_H;
-        ESP_RETURN_ON_ERROR(draw_line_text(y, log_get_line(i), fg, bg), TAG, "draw_line_text");
-    }
-    return ESP_OK;
+static esp_err_t draw_center_text(int y, const char *str, int scale, uint16_t fg, uint16_t bg)
+{
+    int x = (LCD_H_RES - text_px_width(str, scale)) / 2;
+    if (x < 0) x = 0;
+    return draw_text_at(x, y, str, scale, fg, bg);
+}
+
+static esp_err_t draw_time_block(uint16_t fg, uint16_t bg)
+{
+    if (!s_time_synced) return ESP_OK;
+
+    time_t now = time(NULL);
+    now += (time_t)s_tz_offset_min * 60;
+
+    struct tm tm_now;
+    if (gmtime_r(&now, &tm_now) == NULL) return ESP_OK;
+
+    char hhmm[6];
+    char date[40];
+    snprintf(hhmm, sizeof(hhmm), "%02d:%02d", tm_now.tm_hour, tm_now.tm_min);
+    snprintf(date, sizeof(date), "%02d.%02d.%04d",
+             tm_now.tm_mday, tm_now.tm_mon + 1, tm_now.tm_year + 1900);
+
+    ESP_RETURN_ON_ERROR(draw_center_text(72, hhmm, 8, fg, bg), TAG, "time text");
+    return draw_center_text(152, date, 4, fg, bg);
 }
 
 static esp_err_t render_message_screen(const char *msg, uint16_t fg, uint16_t bg)
 {
     ESP_RETURN_ON_ERROR(draw_solid(bg), TAG, "draw_solid");
+    ESP_RETURN_ON_ERROR(draw_time_block(fg, bg), TAG, "time block");
     int y = (LCD_V_RES / 2) - (LINE_H / 2);
     if (y < 0) y = 0;
     return draw_line_text(y, msg, fg, bg);
+}
+
+static esp_err_t draw_checkmark(uint16_t color)
+{
+    const int box = 18;
+    for (int i = 0; i < 8; i++) {
+        ESP_RETURN_ON_ERROR(draw_rect(110 + i * 8, 250 + i * 8, box, box, color), TAG, "check left");
+    }
+    for (int i = 0; i < 16; i++) {
+        ESP_RETURN_ON_ERROR(draw_rect(170 + i * 8, 305 - i * 8, box, box, color), TAG, "check right");
+    }
+    return ESP_OK;
+}
+
+static esp_err_t render_ready_screen(void)
+{
+    const uint16_t bg = rgb565(82, 112, 88);
+    const uint16_t fg = rgb565(246, 238, 220);
+    ESP_RETURN_ON_ERROR(draw_solid(bg), TAG, "ready bg");
+    ESP_RETURN_ON_ERROR(draw_time_block(fg, bg), TAG, "ready time");
+    ESP_RETURN_ON_ERROR(draw_checkmark(fg), TAG, "ready check");
+    ESP_RETURN_ON_ERROR(draw_center_text(370, "PRESS BTN", 5, fg, bg), TAG, "ready text");
+    return ESP_OK;
+}
+
+static esp_err_t render_boot_splash(void)
+{
+    const uint16_t bg = rgb565(46, 43, 38);
+    const uint16_t fg = rgb565(246, 238, 220);
+    const uint16_t bar_bg = rgb565(92, 84, 73);
+    const uint16_t bar_fg = rgb565(170, 142, 112);
+    const int bar_x = 80;
+    const int bar_y = 330;
+    const int bar_w = LCD_H_RES - (bar_x * 2);
+    const int bar_h = 18;
+
+    for (int i = 0; i < 6; i++) {
+        ESP_RETURN_ON_ERROR(draw_solid(bg), TAG, "boot bg");
+        ESP_RETURN_ON_ERROR(draw_center_text(210, "SONYA", 6, fg, bg), TAG, "boot title");
+        ESP_RETURN_ON_ERROR(draw_rect(bar_x, bar_y, bar_w, bar_h, bar_bg), TAG, "boot bar bg");
+        ESP_RETURN_ON_ERROR(draw_rect(bar_x, bar_y, (bar_w * (i + 1)) / 6, bar_h, bar_fg), TAG, "boot bar fg");
+        vTaskDelay(pdMS_TO_TICKS(250));
+    }
+    return ESP_OK;
+}
+
+static void status_pick_main(bool conn, bool app_ready, bool rec, bool err,
+                             const char **out_msg, uint16_t *out_fg, uint16_t *out_bg)
+{
+    if (err) {
+        *out_msg = "ERR";
+        *out_fg = rgb565(246, 238, 220);
+        *out_bg = rgb565(132, 78, 73);
+        return;
+    }
+    if (rec) {
+        *out_msg = "REC ON";
+        *out_fg = rgb565(246, 238, 220);
+        *out_bg = rgb565(142, 103, 72);
+        return;
+    }
+    if (app_ready) {
+        *out_msg = "READY";
+        *out_fg = rgb565(246, 238, 220);
+        *out_bg = rgb565(82, 112, 88);
+        return;
+    }
+    if (conn) {
+        *out_msg = "BLE LINK";
+        *out_fg = rgb565(246, 238, 220);
+        *out_bg = rgb565(96, 105, 96);
+        return;
+    }
+    *out_msg = "BLE ADV";
+    *out_fg = rgb565(246, 238, 220);
+    *out_bg = rgb565(93, 86, 75);
+}
+
+static esp_err_t render_main_status(bool conn, bool app_ready, bool rec, bool err)
+{
+    if (app_ready && !rec && !err) {
+        return render_ready_screen();
+    }
+
+    const char *msg = NULL;
+    uint16_t fg = 0;
+    uint16_t bg = 0;
+    status_pick_main(conn, app_ready, rec, err, &msg, &fg, &bg);
+    return render_message_screen(msg, fg, bg);
 }
 
 static esp_err_t draw_solid(uint16_t color565)
@@ -240,7 +358,8 @@ static esp_err_t draw_solid(uint16_t color565)
         buf_px = want_px;
     }
 
-    for (size_t i = 0; i < buf_px; i++) buf[i] = color565;
+    const uint16_t color_panel = panel_rgb565(color565);
+    for (size_t i = 0; i < buf_px; i++) buf[i] = color_panel;
 
     for (int y = 0; y < LCD_V_RES; y += chunk_lines) {
         int y_end = y + chunk_lines;
@@ -255,56 +374,86 @@ static esp_err_t draw_solid(uint16_t color565)
     return ESP_OK;
 }
 
-static void __attribute__((unused)) task_screen(void *arg)
+static esp_err_t draw_rect(int x, int y, int w, int h, uint16_t color565)
+{
+    if (!s_panel) return ESP_ERR_INVALID_STATE;
+    if (w <= 0 || h <= 0) return ESP_OK;
+
+    int xs = (x >> 1) << 1;
+    int ys = (y >> 1) << 1;
+    int xe = ((x + w) >> 1) << 1;
+    int ye = ((y + h) >> 1) << 1;
+    if (xs < 0) xs = 0;
+    if (ys < 0) ys = 0;
+    if (xe > LCD_H_RES) xe = LCD_H_RES;
+    if (ye > LCD_V_RES) ye = LCD_V_RES;
+    if (xe <= xs || ye <= ys) return ESP_OK;
+
+    const size_t want_px = (size_t)(xe - xs) * (size_t)(ye - ys);
+    uint16_t *buf = (uint16_t *)heap_caps_malloc(want_px * sizeof(uint16_t), MALLOC_CAP_DMA);
+    if (!buf) return ESP_ERR_NO_MEM;
+    const uint16_t color_panel = panel_rgb565(color565);
+    for (size_t i = 0; i < want_px; i++) buf[i] = color_panel;
+    esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel, xs, ys, xe, ye, buf);
+    heap_caps_free(buf);
+    return err;
+}
+
+static void task_screen(void *arg)
 {
     (void)arg;
 
     bool last_conn = false;
+    bool last_app = false;
     bool last_rec = false;
     bool last_err = false;
     bool last_msg_active = false;
+    bool last_time_synced = false;
+    long last_time_minute = -1;
     bool first = true;
 
     for (;;) {
         bool conn = sonya_ble_is_connected();
+        bool app_ready = s_app_ready;
         bool rec = s_recording;
         bool err = s_error;
+        bool time_synced = s_time_synced;
+        long time_minute = -1;
+        if (time_synced) {
+            time_t wall = time(NULL) + ((time_t)s_tz_offset_min * 60);
+            time_minute = (long)(wall / 60);
+        }
         TickType_t now = xTaskGetTickCount();
         bool msg_active = (s_msg_until_tick != 0) && (now < s_msg_until_tick);
-        bool changed = first;
 
-        if (first) {
-            log_add("BLE ADV");
-            changed = true;
-            first = false;
+        if (!conn && app_ready) {
+            s_app_ready = false;
+            app_ready = false;
         }
 
-        if (conn != last_conn) {
-            log_add(conn ? "BLE CONN" : "BLE ADV");
-            changed = true;
-            last_conn = conn;
-        }
-        if (rec != last_rec) {
-            log_add(rec ? "REC ON" : "REC END");
-            changed = true;
-            last_rec = rec;
-        }
-        if (err != last_err) {
-            log_add(err ? "ERR" : "ERR OK");
-            changed = true;
-            last_err = err;
-        }
-
-        if (msg_active != last_msg_active) {
-            changed = true;
-            last_msg_active = msg_active;
-        }
+        bool changed = first || (conn != last_conn) || (app_ready != last_app) ||
+                       (rec != last_rec) || (err != last_err) ||
+                       (msg_active != last_msg_active) ||
+                       (time_synced != last_time_synced) ||
+                       (time_minute != last_time_minute);
 
         if (changed) {
-            esp_err_t e = msg_active
-                ? render_message_screen(s_msg, rgb565(255, 255, 255), rgb565(0, 0, 0))
-                : render_log_screen(rgb565(255, 255, 255), rgb565(0, 0, 0));
+            first = false;
+            esp_err_t e;
+            if (msg_active) {
+                e = render_message_screen(s_msg, rgb565(246, 238, 220), rgb565(46, 43, 38));
+            } else {
+                e = render_main_status(conn, app_ready, rec, err);
+            }
             if (e != ESP_OK) ESP_LOGW(TAG, "render failed: %s", esp_err_to_name(e));
+
+            last_conn = conn;
+            last_app = app_ready;
+            last_rec = rec;
+            last_err = err;
+            last_msg_active = msg_active;
+            last_time_synced = time_synced;
+            last_time_minute = time_minute;
         }
 
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -321,18 +470,39 @@ void status_screen_set_error(bool error)
     s_error = error;
 }
 
+void status_screen_set_app_ready(bool ready)
+{
+    s_app_ready = ready;
+    if (s_panel) {
+        esp_err_t e = render_main_status(sonya_ble_is_connected(), ready, s_recording, s_error);
+        if (e != ESP_OK) ESP_LOGW(TAG, "render app_ready failed: %s", esp_err_to_name(e));
+    }
+}
+
+void status_screen_set_time(time_t epoch, int16_t tz_offset_min)
+{
+    (void)epoch;
+    s_tz_offset_min = tz_offset_min;
+    s_time_synced = true;
+    if (s_panel) {
+        esp_err_t e = render_main_status(sonya_ble_is_connected(), s_app_ready, s_recording, s_error);
+        if (e != ESP_OK) ESP_LOGW(TAG, "render time failed: %s", esp_err_to_name(e));
+    }
+}
+
 void status_screen_show_message(const char *msg, uint32_t ms)
 {
     if (!msg || ms == 0) {
         s_msg_until_tick = 0;
         return;
     }
-    // Copy & uppercase (we only have A-Z and space in the font).
+    // Copy & uppercase to match the tiny built-in font.
     int i = 0;
     for (; i < LOG_LINE_LEN - 1 && msg[i]; i++) {
         char c = msg[i];
         if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
-        if ((c >= 'A' && c <= 'Z') || c == ' ') {
+        if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+            c == ' ' || c == ':' || c == '-' || c == '.') {
             s_msg[i] = c;
         } else {
             s_msg[i] = ' ';
@@ -398,9 +568,6 @@ void status_screen_init(void)
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, false));
     ESP_ERROR_CHECK(draw_solid(rgb565(0, 0, 0)));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
-    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(s_io, 0x29, NULL, 0)); // Display ON
-    const uint8_t br = 0xFF;
-    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(s_io, 0x51, &br, 1));
     {
         uint8_t pm = 0;
         esp_err_t e = esp_lcd_panel_io_rx_param(s_io, 0x0A, &pm, 1);
@@ -410,16 +577,11 @@ void status_screen_init(void)
         ESP_LOGI(TAG, "lcd rx 0x0D display_mode: %s %02X", esp_err_to_name(e), dm);
     }
 
-    // Hardware blink test: 6 frames alternating red/blue to confirm panel responds.
-    // Remove once display is confirmed working.
-    ESP_LOGI(TAG, "hw blink test start");
-    for (int i = 0; i < 6; i++) {
-        uint16_t color = (i % 2 == 0) ? rgb565(255, 0, 0) : rgb565(0, 0, 255);
-        ESP_ERROR_CHECK(draw_solid(color));
-        vTaskDelay(pdMS_TO_TICKS(400));
-    }
-    ESP_ERROR_CHECK(draw_solid(rgb565(0, 0, 0)));
-    ESP_LOGI(TAG, "hw blink test done");
+    // Boot splash confirms the watch is starting before BLE/app state is known.
+    ESP_ERROR_CHECK(render_boot_splash());
+
+    // Show status immediately after splash.
+    ESP_ERROR_CHECK(render_main_status(false, false, false, false));
 
     xTaskCreate(task_screen, "status_screen", 4096, NULL, 5, NULL);
 #else

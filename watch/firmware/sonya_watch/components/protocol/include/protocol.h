@@ -63,6 +63,7 @@ typedef enum {
     PROTO_CMD_BATT,
     PROTO_CMD_GET,
     PROTO_CMD_DONE,
+    PROTO_CMD_TIME,
 } proto_cmd_t;
 
 /**
@@ -73,10 +74,14 @@ typedef enum {
  * @param out_rec_id Output: rec id for GET/DONE
  * @param out_offset Output: offset for GET
  * @param out_len Output: requested length for GET
+ * @param out_time_epoch Output: unix timestamp for TIME
+ * @param out_tz_offset_min Output: local timezone offset in minutes for TIME
  * @return Parsed command type
  */
 proto_cmd_t proto_parse_rx_cmd(const uint8_t *buf, size_t len,
                                int *out_rec_sec,
                                uint16_t *out_rec_id,
                                uint32_t *out_offset,
-                               uint16_t *out_len);
+                               uint16_t *out_len,
+                               uint64_t *out_time_epoch,
+                               int16_t *out_tz_offset_min);

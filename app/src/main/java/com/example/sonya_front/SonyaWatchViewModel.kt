@@ -196,6 +196,14 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
 
     fun sendPing() {
         ble.writeAsciiCommand("PING")
+        sendTimeSync()
+    }
+
+    private fun sendTimeSync() {
+        val nowMs = System.currentTimeMillis()
+        val epochSec = nowMs / 1000L
+        val tzOffsetMin = TimeZone.getDefault().getOffset(nowMs) / 60_000
+        ble.writeAsciiCommand("TIME:$epochSec:$tzOffsetMin")
     }
 
     fun sendSetRec2() {
@@ -422,7 +430,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                     handleBatteryInfo(m)
                     return
                 }
-                val isInfo = m == "PONG" || m.startsWith("REC_SEC=")
+                val isInfo = m == "PONG" || m == "TIME_OK" || m == "TIME_REQ" || m.startsWith("REC_SEC=")
                 if (m.startsWith("DONE_OK:")) {
                     val id = m.removePrefix("DONE_OK:").toIntOrNull()
                     if (id != null && id == pendingDoneRecId) {
@@ -444,6 +452,9 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
                 if (isInfo) {
                     appendLog("watch: '$m'")
                     setEvent("WATCH: $m")
+                    if (m == "PONG" || m == "TIME_REQ") {
+                        sendTimeSync()
+                    }
                     if (m == "PONG" && readyVibrationPending) {
                         readyVibrationPending = false
                         vibrateReadyPulse()

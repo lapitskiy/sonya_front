@@ -67,6 +67,25 @@ void status_ui_set_error(bool error)
     }
 }
 
+void status_ui_set_app_ready(bool ready)
+{
+#if defined(CONFIG_UI_LVGL_ENABLE)
+    (void)ready;
+#else
+    status_screen_set_app_ready(ready);
+#endif
+}
+
+void status_ui_set_time(time_t epoch, int16_t tz_offset_min)
+{
+#if defined(CONFIG_UI_LVGL_ENABLE)
+    (void)epoch;
+    (void)tz_offset_min;
+#else
+    status_screen_set_time(epoch, tz_offset_min);
+#endif
+}
+
 void status_ui_show_message(const char *msg, uint32_t ms)
 {
 #if defined(CONFIG_UI_LVGL_ENABLE)

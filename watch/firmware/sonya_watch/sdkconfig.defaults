@@ -42,7 +42,7 @@ CONFIG_PM_POWER_DOWN_TAGMEM_IN_LIGHT_SLEEP=y
 CONFIG_SR_WN_WN9_HIJOY_TTS=y
 
 # UI: low-level status screen (display bring-up diagnostics)
-# CONFIG_STATUS_SCREEN_ENABLE is not set
+CONFIG_STATUS_SCREEN_ENABLE=y
 # CONFIG_UI_LVGL_ENABLE is not set
 
 # LVGL fonts: make UI readable + allow symbol icons to be visible
