@@ -310,7 +310,17 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onSnooze = { actionId, type, label ->
                                     val i = Intent(ctx, PendingActionForegroundService::class.java).apply {
-                                        action = PendingActionForegroundService.ACTION_SNOOZE_15
+                                        action = PendingActionForegroundService.ACTION_SNOOZE_30
+                                        putExtra(PendingActionReceiver.EXTRA_DEVICE_ID, deviceIdStr)
+                                        putExtra(PendingActionReceiver.EXTRA_ACTION_ID, actionId)
+                                        putExtra(PendingActionReceiver.EXTRA_TYPE, type)
+                                        putExtra(PendingActionReceiver.EXTRA_TTS, label)
+                                    }
+                                    ctx.startService(i)
+                                },
+                                onSnoozeDay = { actionId, type, label ->
+                                    val i = Intent(ctx, PendingActionForegroundService::class.java).apply {
+                                        action = PendingActionForegroundService.ACTION_SNOOZE_24H
                                         putExtra(PendingActionReceiver.EXTRA_DEVICE_ID, deviceIdStr)
                                         putExtra(PendingActionReceiver.EXTRA_ACTION_ID, actionId)
                                         putExtra(PendingActionReceiver.EXTRA_TYPE, type)
@@ -1584,6 +1594,7 @@ fun StatusScreen(
     onCancel: (Int) -> Unit,
     onDone: (Int, String, String) -> Unit,
     onSnooze: (Int, String, String) -> Unit,
+    onSnoozeDay: (Int, String, String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -1713,7 +1724,11 @@ fun StatusScreen(
                                         }
                                         Spacer(Modifier.width(8.dp))
                                         Button(onClick = { onSnooze(a.actionId, a.type, a.label) }) {
-                                            Text("+15")
+                                            Text("+30")
+                                        }
+                                        Spacer(Modifier.width(8.dp))
+                                        Button(onClick = { onSnoozeDay(a.actionId, a.type, a.label) }) {
+                                            Text("+день")
                                         }
                                     }
                                 }

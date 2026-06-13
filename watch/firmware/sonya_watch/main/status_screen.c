@@ -258,7 +258,8 @@ static esp_err_t render_ready_screen(void)
     const uint16_t bg = rgb565(82, 112, 88);
     const uint16_t fg = rgb565(246, 238, 220);
     ESP_RETURN_ON_ERROR(draw_solid(bg), TAG, "ready bg");
-    ESP_RETURN_ON_ERROR(draw_center_text(210, "READY", 7, fg, bg), TAG, "ready text");
+    ESP_RETURN_ON_ERROR(draw_center_text(250, "READY", 7, fg, bg), TAG, "ready text");
+    ESP_RETURN_ON_ERROR(draw_time_block(fg, bg), TAG, "ready time");
     ESP_RETURN_ON_ERROR(draw_center_text(330, "PRESS BTN", 4, fg, bg), TAG, "ready hint");
     return ESP_OK;
 }

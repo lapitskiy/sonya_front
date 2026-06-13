@@ -470,45 +470,17 @@ class PendingActionForegroundService : Service() {
             (PendingIntent.FLAG_UPDATE_CURRENT) or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
         )
 
-        val snoozeIntent = Intent(this, PendingActionForegroundService::class.java).apply {
-            action = ACTION_SNOOZE_15
+        val snooze30Intent = Intent(this, PendingActionForegroundService::class.java).apply {
+            action = ACTION_SNOOZE_30
             putExtra(PendingActionReceiver.EXTRA_DEVICE_ID, deviceId)
             putExtra(PendingActionReceiver.EXTRA_ACTION_ID, actionId)
             putExtra(PendingActionReceiver.EXTRA_TYPE, type)
             putExtra(PendingActionReceiver.EXTRA_TTS, ttsText)
         }
-        val snoozePi = PendingIntent.getService(
+        val snooze30Pi = PendingIntent.getService(
             this,
             actionId + 1,
-            snoozeIntent,
-            (PendingIntent.FLAG_UPDATE_CURRENT) or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
-        )
-
-        val snooze60Intent = Intent(this, PendingActionForegroundService::class.java).apply {
-            action = ACTION_SNOOZE_60
-            putExtra(PendingActionReceiver.EXTRA_DEVICE_ID, deviceId)
-            putExtra(PendingActionReceiver.EXTRA_ACTION_ID, actionId)
-            putExtra(PendingActionReceiver.EXTRA_TYPE, type)
-            putExtra(PendingActionReceiver.EXTRA_TTS, ttsText)
-        }
-        val snooze60Pi = PendingIntent.getService(
-            this,
-            actionId + 2,
-            snooze60Intent,
-            (PendingIntent.FLAG_UPDATE_CURRENT) or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
-        )
-
-        val snooze180Intent = Intent(this, PendingActionForegroundService::class.java).apply {
-            action = ACTION_SNOOZE_180
-            putExtra(PendingActionReceiver.EXTRA_DEVICE_ID, deviceId)
-            putExtra(PendingActionReceiver.EXTRA_ACTION_ID, actionId)
-            putExtra(PendingActionReceiver.EXTRA_TYPE, type)
-            putExtra(PendingActionReceiver.EXTRA_TTS, ttsText)
-        }
-        val snooze180Pi = PendingIntent.getService(
-            this,
-            actionId + 3,
-            snooze180Intent,
+            snooze30Intent,
             (PendingIntent.FLAG_UPDATE_CURRENT) or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
         )
 
@@ -521,7 +493,7 @@ class PendingActionForegroundService : Service() {
         }
         val snooze24hPi = PendingIntent.getService(
             this,
-            actionId + 4,
+            actionId + 2,
             snooze24hIntent,
             (PendingIntent.FLAG_UPDATE_CURRENT) or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
         )
@@ -537,8 +509,7 @@ class PendingActionForegroundService : Service() {
             .setOngoing(true)
             // Some OEMs don't show actions when icon=0, so use a real icon.
             .addAction(android.R.drawable.ic_menu_save, "Выполнено", donePi)
-            .addAction(android.R.drawable.ic_lock_idle_alarm, "+15", snoozePi)
-            .addAction(android.R.drawable.ic_lock_idle_alarm, "+60", snooze60Pi)
+            .addAction(android.R.drawable.ic_lock_idle_alarm, "+30", snooze30Pi)
             .addAction(android.R.drawable.ic_lock_idle_alarm, "+день", snooze24hPi)
             .build()
     }
