@@ -75,6 +75,15 @@ data class CommandResponseAction(
     val error: String? = null,
 )
 
+data class CommandResponseEnvelope(
+    val id: Int? = null,
+    val type: String? = null,
+    val time: String? = null,
+    val text: String? = null,
+    val error: String? = null,
+    val intent: CommandResponseAction? = null,
+)
+
 data class PendingActionsResponse(
     val items: List<PendingAction> = emptyList()
 )

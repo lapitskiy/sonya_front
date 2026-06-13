@@ -2,10 +2,8 @@ package com.example.sonya_front
 
 import android.app.Application
 import android.annotation.SuppressLint
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -56,7 +54,7 @@ data class SonyaWatchUiState(
     val logTail: List<String> = emptyList(),
 )
 
-class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
+class SonyaWatchViewModel(app: Application) : AndroidViewModel(app), SonyaWatchBleManager.Listener {
     private val _ui = mutableStateOf(
         SonyaWatchUiState(
             backendUrl = "http://188.243.119.154:18000/voice",
@@ -97,81 +95,64 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     private var readyVibrationPending = false
 
     private lateinit var ble: SonyaWatchBleClient
-    private val watchBackendResultReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action != VoiceRecognitionService.WATCH_BACKEND_RESULT_ACTION) return
-            val ok = intent.getBooleanExtra(VoiceRecognitionService.EXTRA_WATCH_BACKEND_OK, false)
-            val cmd = if (ok) "UI:OK" else "UI:ERR"
-            appendLog("watch backend result -> $cmd")
-            ble.writeAsciiCommand(cmd)
-        }
-    }
 
     init {
-        // NOTE: keep BLE client initialization out of property initializers.
-        // Otherwise Kotlin can hit recursive type checking because callbacks call methods that use `ble`.
-        ble = SonyaWatchBleClient(
-            appCtx = app.applicationContext,
-            onLog = { appendLog(it) },
-            onConnectedChanged = { isConn ->
-                val cur = _ui.value
-                _ui.value = cur.copy(connected = isConn)
-                appendLog(if (isConn) "BLE connected" else "BLE disconnected")
-                if (isConn) {
-                    readyVibrationPending = true
-                    // Distinguish "GATT connected" from "protocol is alive".
-                    setEvent("BLE подключено (жду PONG)…")
-                    // RX/TX characteristics might not be ready immediately; retry a couple of times.
-                    viewModelScope.launch {
-                        delay(600L)
-                        sendPing()
-                        delay(1200L)
-                        if (_ui.value.connected) {
-                            sendPing()
-                        }
-                    }
-                } else {
-                    readyVibrationPending = false
-                    // Reset protocol state so UI doesn't look "stuck".
-                    recording = false
-                    downloading = false
-                    expectedSeq = null
-                    pendingMeta = null
-                    pendingOffset = 0
-                    liveRecId = -1
-                    lastBroadcastProgressPct = -1
-                    pendingDoneRecId = -1
-                    doneRetryJob?.cancel()
-                    doneRetryJob = null
-                    pullTimeoutJob?.cancel()
-                    pullTimeoutJob = null
-                    _ui.value = _ui.value.copy(downloadTotalBytes = 0, downloadOffsetBytes = 0, bytesTotal = 0)
-                    setEvent("Ожидаю подключения к часам…")
-                }
-            },
-            onScanningChanged = { isScan ->
-                val cur = _ui.value
-                _ui.value = cur.copy(scanning = isScan)
-            },
-            onNotifyBytes = { bytes -> onNotify(bytes) }
-        )
-        registerWatchBackendResultReceiver(app.applicationContext)
-    }
-
-    private fun registerWatchBackendResultReceiver(ctx: Context) {
-        val filter = IntentFilter(VoiceRecognitionService.WATCH_BACKEND_RESULT_ACTION)
-        if (Build.VERSION.SDK_INT >= 33) {
-            ctx.registerReceiver(watchBackendResultReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            ctx.registerReceiver(watchBackendResultReceiver, filter)
-        }
+        ble = SonyaWatchBleManager.registerListener(app.applicationContext, this)
     }
 
     override fun onCleared() {
-        runCatching {
-            getApplication<Application>().applicationContext.unregisterReceiver(watchBackendResultReceiver)
-        }
+        SonyaWatchBleManager.unregisterListener(this)
         super.onCleared()
+    }
+
+    override fun onWatchLog(line: String) {
+        appendLog(line, writeToAppLog = false)
+    }
+
+    override fun onWatchConnectedChanged(connected: Boolean) {
+        val cur = _ui.value
+        _ui.value = cur.copy(connected = connected)
+        appendLog(if (connected) "BLE connected" else "BLE disconnected")
+        if (connected) {
+            readyVibrationPending = true
+            // Distinguish "GATT connected" from "protocol is alive".
+            setEvent("BLE подключено (жду PONG)…")
+            // RX/TX characteristics might not be ready immediately; retry a couple of times.
+            viewModelScope.launch {
+                delay(600L)
+                sendPing()
+                delay(1200L)
+                if (_ui.value.connected) {
+                    sendPing()
+                }
+            }
+        } else {
+            readyVibrationPending = false
+            // Reset protocol state so UI doesn't look "stuck".
+            recording = false
+            downloading = false
+            expectedSeq = null
+            pendingMeta = null
+            pendingOffset = 0
+            liveRecId = -1
+            lastBroadcastProgressPct = -1
+            pendingDoneRecId = -1
+            doneRetryJob?.cancel()
+            doneRetryJob = null
+            pullTimeoutJob?.cancel()
+            pullTimeoutJob = null
+            _ui.value = _ui.value.copy(downloadTotalBytes = 0, downloadOffsetBytes = 0, bytesTotal = 0)
+            setEvent("Ожидаю подключения к часам…")
+        }
+    }
+
+    override fun onWatchScanningChanged(scanning: Boolean) {
+        val cur = _ui.value
+        _ui.value = cur.copy(scanning = scanning)
+    }
+
+    override fun onWatchNotifyBytes(bytes: ByteArray) {
+        onNotify(bytes)
     }
 
     fun setAppVisible(visible: Boolean) {
@@ -820,8 +801,8 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
         broadcastStatus("Часы: передача аудио $pct%")
     }
 
-    private fun appendLog(line: String) {
-        Log.i(SonyaWatchProtocol.TAG, line)
+    private fun appendLog(line: String, writeToAppLog: Boolean = true) {
+        if (writeToAppLog) Log.i(SonyaWatchProtocol.TAG, line)
         val cur = _ui.value
         val next = (cur.logTail + line).takeLast(60)
         _ui.value = cur.copy(logTail = next)

@@ -592,7 +592,17 @@ uint8_t wake_get_confidence(void)
 
 void wake_on_rx_cmd(const char *cmd)
 {
-    if (!cmd || !s_cmd_queue || s_mode != WAKE_MODE_CMD) return;
+    if (!cmd) return;
+    if (strcmp(cmd, "START") != 0 && strcmp(cmd, "REC") != 0) return;
+
+    if (s_mode != WAKE_MODE_CMD) {
+        s_last_src = WAKE_SRC_CMD;
+        s_wake_pending = true;
+        ESP_LOGI(TAG, "cmd trigger: %s mode=%d", cmd, (int)s_mode);
+        return;
+    }
+
+    if (!s_cmd_queue) return;
     char buf[CMD_MAX_LEN];
     size_t n = strlen(cmd);
     if (n >= CMD_MAX_LEN) n = CMD_MAX_LEN - 1;

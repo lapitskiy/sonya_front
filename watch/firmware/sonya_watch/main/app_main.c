@@ -493,7 +493,6 @@ static void record_button(int want)
 
 /* ---- recording (CMD mode) ---- */
 
-#if !defined(CONFIG_WAKE_MODE_BUTTON)
 static void record_cmd(int cap_sec, int want)
 {
     (void)cap_sec;
@@ -583,7 +582,6 @@ static void record_cmd(int cap_sec, int want)
 
     ESP_LOGI(TAG, "REC_END bytes=%d", got);
 }
-#endif /* !CONFIG_WAKE_MODE_BUTTON */
 
 /* ---- app_main ---- */
 
@@ -736,9 +734,7 @@ void app_main(void)
             continue;
         }
         bool by_btn =
-#if defined(CONFIG_WAKE_MODE_BUTTON)
-            true;
-#elif defined(CONFIG_WAKE_MODE_MULTI)
+#if defined(CONFIG_WAKE_MODE_BUTTON) || defined(CONFIG_WAKE_MODE_MULTI)
             wake_triggered_by_button();
 #else
             false;
@@ -768,7 +764,7 @@ void app_main(void)
             status_ui_show_message("WAKE", 10 * 1000);
         }
 #if defined(CONFIG_WAKE_MODE_BUTTON)
-        if (!sonya_ble_is_connected()) {
+        if (by_btn && !sonya_ble_is_connected()) {
             ESP_LOGW(TAG, "button trigger but BLE not connected -> ignore");
             status_ui_set_error(true);
             status_ui_set_recording(false);
@@ -807,7 +803,15 @@ void app_main(void)
 
         int cap_sec;
 #if defined(CONFIG_WAKE_MODE_BUTTON)
-        cap_sec = REC_MAX_SEC;
+        if (by_btn) {
+            cap_sec = REC_MAX_SEC;
+        } else {
+#if CONFIG_REC_STOP_ON_SILENCE
+            cap_sec = REC_MAX_SEC;
+#else
+            cap_sec = s_rec_seconds;
+#endif
+        }
 #elif CONFIG_REC_STOP_ON_SILENCE
         cap_sec = REC_MAX_SEC;
 #else
@@ -863,7 +867,11 @@ void app_main(void)
         }
 
 #if defined(CONFIG_WAKE_MODE_BUTTON)
-        record_button(want);
+        if (by_btn) {
+            record_button(want);
+        } else {
+            record_cmd(cap_sec, want);
+        }
 #else
         if (
 #if defined(CONFIG_WAKE_MODE_MULTI)

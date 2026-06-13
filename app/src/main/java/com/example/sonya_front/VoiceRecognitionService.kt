@@ -1103,7 +1103,8 @@ class VoiceRecognitionService : Service() {
             val rawBody = resp.raw().peekBody(64 * 1024).string().trim()
             if (rawBody.isBlank() || rawBody == "null") return null
             val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
-            moshi.adapter(CommandResponseAction::class.java).fromJson(rawBody)?.type
+            val envelope = moshi.adapter(CommandResponseEnvelope::class.java).fromJson(rawBody)
+            envelope?.intent?.type ?: envelope?.type
         } catch (_: Throwable) {
             null
         }
@@ -1407,6 +1408,7 @@ class VoiceRecognitionService : Service() {
     }
 
     private fun broadcastWatchBackendResult(ok: Boolean) {
+        SonyaWatchBleManager.sendBackendResult(applicationContext, ok)
         sendBroadcast(Intent(WATCH_BACKEND_RESULT_ACTION).putExtra(EXTRA_WATCH_BACKEND_OK, ok))
     }
 
