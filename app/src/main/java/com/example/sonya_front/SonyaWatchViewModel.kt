@@ -116,16 +116,7 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app), SonyaWatchB
         if (connected) {
             readyVibrationPending = true
             // Distinguish "GATT connected" from "protocol is alive".
-            setEvent("BLE подключено (жду PONG)…")
-            // RX/TX characteristics might not be ready immediately; retry a couple of times.
-            viewModelScope.launch {
-                delay(600L)
-                sendPing()
-                delay(1200L)
-                if (_ui.value.connected) {
-                    sendPing()
-                }
-            }
+            setEvent("BLE подключено (готовлю GATT)…")
         } else {
             readyVibrationPending = false
             // Reset protocol state so UI doesn't look "stuck".
@@ -143,6 +134,18 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app), SonyaWatchB
             pullTimeoutJob = null
             _ui.value = _ui.value.copy(downloadTotalBytes = 0, downloadOffsetBytes = 0, bytesTotal = 0)
             setEvent("Ожидаю подключения к часам…")
+        }
+    }
+
+    override fun onWatchGattReady() {
+        if (!_ui.value.connected) return
+        setEvent("BLE готово (жду PONG)…")
+        viewModelScope.launch {
+            sendPing()
+            delay(1500L)
+            if (_ui.value.connected) {
+                sendPing()
+            }
         }
     }
 

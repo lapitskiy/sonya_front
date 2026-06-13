@@ -31,6 +31,7 @@ class SonyaWatchBleClient(
     private val onLog: (String) -> Unit,
     private val onConnectedChanged: (Boolean) -> Unit,
     private val onScanningChanged: (Boolean) -> Unit,
+    private val onGattReady: () -> Unit,
     private val onNotifyBytes: (ByteArray) -> Unit,
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -46,6 +47,7 @@ class SonyaWatchBleClient(
 
     @Volatile private var connected = false
     @Volatile private var scanning = false
+    @Volatile private var gattReady = false
     private val connecting = AtomicBoolean(false)
     private val scanSessionId = AtomicInteger(0)
     private val scanLoggedAddrs = HashSet<String>()
@@ -53,9 +55,9 @@ class SonyaWatchBleClient(
     @Volatile private var autoEnabled = false
     private var normalAutoIntervalMs: Long = 15_000L
     private var normalAutoScanWindowMs: Long = 6_000L
-    private val fastAutoIntervalMs: Long = 1_000L
+    private val fastAutoIntervalMs: Long = 3_000L
     private val fastAutoScanWindowMs: Long = 10_000L
-    private val fastWindowDurationMs: Long = 10_000L
+    private val fastWindowDurationMs: Long = 20_000L
     @Volatile private var fastUntilMs: Long = 0L
     private var autoTickRunnable: Runnable? = null
     private var scanStopRunnable: Runnable? = null
@@ -72,6 +74,7 @@ class SonyaWatchBleClient(
 
     fun isConnected(): Boolean = connected
     fun isScanning(): Boolean = scanning
+    fun isGattReady(): Boolean = gattReady
 
     fun isAutoEnabled(): Boolean = autoEnabled
 
@@ -135,6 +138,7 @@ class SonyaWatchBleClient(
         service = null
         rxChar = null
         txChar = null
+        gattReady = false
         writeQueue.clear()
         writeInFlight = false
         mtuRequested = false
@@ -347,6 +351,7 @@ class SonyaWatchBleClient(
                 log("connectGatt: missing Bluetooth permissions (CONNECT)")
                 return
             }
+            gattReady = false
             scheduleConnectTimeout(currentConnectTimeoutMs())
             val g = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 dev.connectGatt(appCtx, false, gattCb, BluetoothDevice.TRANSPORT_LE)
@@ -387,6 +392,7 @@ class SonyaWatchBleClient(
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     setConnected(false)
+                    gattReady = false
                     connecting.set(false)
                     cancelConnectTimeout()
                     try {
@@ -398,12 +404,13 @@ class SonyaWatchBleClient(
                         service = null
                         rxChar = null
                         txChar = null
+                        gattReady = false
                         mtuRequested = false
                         servicesDiscoveryStarted = false
                         notifyEnableRequested = false
                     }
                     if (autoEnabled) {
-                        scheduleNextAutoTick(1200L)
+                        scheduleNextAutoTick(3_000L)
                     }
                 }
             }
@@ -435,7 +442,12 @@ class SonyaWatchBleClient(
             if (rxChar == null) log("gatt: RX characteristic not found ${SonyaWatchProtocol.RX_UUID}")
             if (txChar == null) log("gatt: TX characteristic not found ${SonyaWatchProtocol.TX_UUID}")
 
-            val tx = txChar ?: return
+            val rx = rxChar
+            val tx = txChar
+            if (rx == null || tx == null) {
+                servicesDiscoveryStarted = false
+                return
+            }
             notifyEnableRequested = true
             enableNotify(gatt, tx)
         }
@@ -464,6 +476,9 @@ class SonyaWatchBleClient(
             if (status == BluetoothGatt.GATT_SUCCESS &&
                 descriptor.uuid == UUID.fromString("00002902-0000-1000-8000-00805f9b34fb") &&
                 !mtuRequested) {
+                gattReady = true
+                log("gatt: ready")
+                mainHandler.post { onGattReady() }
                 try {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                         mtuRequested = true
@@ -714,7 +729,7 @@ class SonyaWatchBleClient(
     }
 
     private fun currentConnectTimeoutMs(nowMs: Long = System.currentTimeMillis()): Long {
-        return if (inFastWindow(nowMs)) 4_500L else 12_000L
+        return if (inFastWindow(nowMs)) 12_000L else 15_000L
     }
 
     private fun scheduleConnectTimeout(timeoutMs: Long) {
@@ -748,6 +763,7 @@ class SonyaWatchBleClient(
         service = null
         rxChar = null
         txChar = null
+        gattReady = false
         writeQueue.clear()
         writeInFlight = false
         mtuRequested = false
