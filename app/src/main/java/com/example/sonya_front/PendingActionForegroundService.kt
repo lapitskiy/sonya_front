@@ -617,7 +617,7 @@ class PendingActionForegroundService : Service() {
         private const val ACTION_STOP = "com.example.sonya_front.PENDING_ACTION_STOP" // backward compat
         private const val ACTION_DONE = "com.example.sonya_front.PENDING_ACTION_DONE"
         private const val ACTION_SNOOZE = "com.example.sonya_front.PENDING_ACTION_SNOOZE" // backward compat (+5)
-        private const val ACTION_SNOOZE_30 = "com.example.sonya_front.PENDING_ACTION_SNOOZE_30" // backward compat (+30)
+        const val ACTION_SNOOZE_30 = "com.example.sonya_front.PENDING_ACTION_SNOOZE_30" // backward compat (+30)
 
         const val ACTION_SNOOZE_15 = "com.example.sonya_front.PENDING_ACTION_SNOOZE_15"
         const val ACTION_SNOOZE_60 = "com.example.sonya_front.PENDING_ACTION_SNOOZE_60"
