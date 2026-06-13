@@ -64,6 +64,8 @@ typedef enum {
     PROTO_CMD_GET,
     PROTO_CMD_DONE,
     PROTO_CMD_TIME,
+    PROTO_CMD_UI_OK,
+    PROTO_CMD_UI_ERR,
 } proto_cmd_t;
 
 /**

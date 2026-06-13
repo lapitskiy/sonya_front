@@ -2,8 +2,10 @@ package com.example.sonya_front
 
 import android.app.Application
 import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -95,6 +97,15 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
     private var readyVibrationPending = false
 
     private lateinit var ble: SonyaWatchBleClient
+    private val watchBackendResultReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != VoiceRecognitionService.WATCH_BACKEND_RESULT_ACTION) return
+            val ok = intent.getBooleanExtra(VoiceRecognitionService.EXTRA_WATCH_BACKEND_OK, false)
+            val cmd = if (ok) "UI:OK" else "UI:ERR"
+            appendLog("watch backend result -> $cmd")
+            ble.writeAsciiCommand(cmd)
+        }
+    }
 
     init {
         // NOTE: keep BLE client initialization out of property initializers.
@@ -144,6 +155,23 @@ class SonyaWatchViewModel(app: Application) : AndroidViewModel(app) {
             },
             onNotifyBytes = { bytes -> onNotify(bytes) }
         )
+        registerWatchBackendResultReceiver(app.applicationContext)
+    }
+
+    private fun registerWatchBackendResultReceiver(ctx: Context) {
+        val filter = IntentFilter(VoiceRecognitionService.WATCH_BACKEND_RESULT_ACTION)
+        if (Build.VERSION.SDK_INT >= 33) {
+            ctx.registerReceiver(watchBackendResultReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            ctx.registerReceiver(watchBackendResultReceiver, filter)
+        }
+    }
+
+    override fun onCleared() {
+        runCatching {
+            getApplication<Application>().applicationContext.unregisterReceiver(watchBackendResultReceiver)
+        }
+        super.onCleared()
     }
 
     fun setAppVisible(visible: Boolean) {

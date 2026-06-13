@@ -179,6 +179,10 @@ class VoiceRecognitionService : Service() {
         val EXTRA_RECOGNIZED_TEXT = "recognized_text"
         val EXTRA_RECOGNIZED_SOURCE = "recognized_source"
 
+        // Result of backend processing for commands that originated from the watch.
+        val WATCH_BACKEND_RESULT_ACTION = "com.example.sonya_front.WATCH_BACKEND_RESULT"
+        val EXTRA_WATCH_BACKEND_OK = "watch_backend_ok"
+
         // Состояние активной записи команды (для UI-кнопки "Отбой").
         val COMMAND_MODE_STATE_ACTION = "com.example.sonya_front.COMMAND_MODE_STATE"
         val EXTRA_COMMAND_MODE_ACTIVE = "command_mode_active"
@@ -890,6 +894,7 @@ class VoiceRecognitionService : Service() {
         )
 
         serviceScope.launch {
+            val fromWatch = source == "watch_vosk"
             try {
                 var resp = ApiClient.instance.sendCommand(request)
                 Log.d("API_CALL", "Command sent successfully: $request")
@@ -908,14 +913,18 @@ class VoiceRecognitionService : Service() {
                 if (unresolvedNoAiConnection) {
                     broadcastStatusUpdate("Ошибка отправки: AI недоступен")
                     broadcastHint("AI недоступен (no_ai_connection). Повтор не помог.")
+                    if (fromWatch) broadcastWatchBackendResult(false)
                 } else if (resp.isSuccessful) {
                     // Voice feedback: backend accepted the command ("поставилась в работу").
                     vibrateVoiceAck()
-                    val spokenAck = if (isUnknownCommandType(finalResponseType)) "Не поняла, повторите" else "Всё ОК"
+                    val commandOk = !isUnknownCommandType(finalResponseType)
+                    val spokenAck = if (commandOk) "Всё ОК" else "Не поняла, повторите"
                     speakOnMain(spokenAck, queueMode = TextToSpeech.QUEUE_ADD)
                     broadcastStatusUpdate("Команда отправлена")
+                    if (fromWatch) broadcastWatchBackendResult(commandOk)
                 } else {
                     broadcastStatusUpdate("Ошибка отправки: HTTP ${resp.code()}")
+                    if (fromWatch) broadcastWatchBackendResult(false)
                 }
 
                 // Pull pending actions right after the command is accepted by backend.
@@ -924,6 +933,7 @@ class VoiceRecognitionService : Service() {
                 val body = try { e.response()?.errorBody()?.string() } catch (_: Throwable) { null }
                 Log.e("API_CALL_ERROR", "HTTP ${e.code()} while sending command. errorBody=${body ?: "<empty>"} request=$request", e)
                 broadcastStatusUpdate("Ошибка отправки: HTTP ${e.code()}")
+                if (fromWatch) broadcastWatchBackendResult(false)
             } catch (e: IOException) {
                 Log.e("API_CALL_ERROR", "Network error while sending command. request=$request", e)
                 OfflineCommandCacheStore.enqueue(
@@ -933,9 +943,11 @@ class VoiceRecognitionService : Service() {
                 )
                 broadcastStatusUpdate("Ошибка сети при отправке")
                 broadcastHint("Нет интернета. Команда сохранена в Кеш.")
+                if (fromWatch) broadcastWatchBackendResult(false)
             } catch (e: Exception) {
                 Log.e("API_CALL_ERROR", "Unexpected error while sending command. request=$request", e)
                 broadcastStatusUpdate("Ошибка отправки команды")
+                if (fromWatch) broadcastWatchBackendResult(false)
             }
         }
     }
@@ -1392,6 +1404,10 @@ class VoiceRecognitionService : Service() {
 
     private fun broadcastStatusUpdate(status: String) {
         sendBroadcast(Intent(STATUS_UPDATE_ACTION).putExtra(STATUS_UPDATE_TEXT, status))
+    }
+
+    private fun broadcastWatchBackendResult(ok: Boolean) {
+        sendBroadcast(Intent(WATCH_BACKEND_RESULT_ACTION).putExtra(EXTRA_WATCH_BACKEND_OK, ok))
     }
 
     private fun broadcastHint(message: String) {

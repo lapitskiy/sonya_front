@@ -319,7 +319,6 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
         }
         if (rec_id == rec_store_cur_id()) {
             pull_stream_handle_done(rec_id);
-            status_ui_show_ok(900);
             s_last_rec_end_tick = 0;
             if (sonya_ble_is_connected()) {
                 char msg[32];
@@ -334,6 +333,14 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
             }
         }
         break;
+    case PROTO_CMD_UI_OK:
+        ESP_LOGI(TAG, "RX: UI:OK");
+        status_ui_show_ok(900);
+        break;
+    case PROTO_CMD_UI_ERR:
+        ESP_LOGI(TAG, "RX: UI:ERR");
+        status_ui_show_message("ERR", 1200);
+        break;
     default:
         ESP_LOGW(TAG, "RX: unknown cmd (%d bytes)", len);
         break;
@@ -342,7 +349,7 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
 
 /* ---- send REC_END meta ---- */
 
-static void send_rec_end_meta(void)
+static int send_rec_end_meta(void)
 {
     uint16_t rid   = rec_store_cur_id();
     uint32_t total = (uint32_t)rec_store_total_bytes();
@@ -362,7 +369,7 @@ static void send_rec_end_meta(void)
     meta[9]  = (uint8_t)((crc  >> 24) & 0xFF);
     meta[10] = (uint8_t)(sr16  & 0xFF);
     meta[11] = (uint8_t)(sr16  >> 8);
-    sonya_ble_send_frame(PROTO_EVT_REC_END, meta, (uint16_t)sizeof(meta));
+    return sonya_ble_send_frame(PROTO_EVT_REC_END, meta, (uint16_t)sizeof(meta));
 }
 
 /* ---- recording (BUTTON mode) ---- */
@@ -891,9 +898,12 @@ void app_main(void)
         status_ui_set_recording(false);
 
         if (sonya_ble_is_connected()) {
-            send_rec_end_meta();
-            ESP_LOGI(TAG, "REC_END meta sent: id=%u bytes=%d",
-                     (unsigned)rec_store_cur_id(), rec_store_total_bytes());
+            int meta_rc = send_rec_end_meta();
+            ESP_LOGI(TAG, "REC_END meta send rc=%d: id=%u bytes=%d",
+                     meta_rc, (unsigned)rec_store_cur_id(), rec_store_total_bytes());
+            if (meta_rc != 0) {
+                status_ui_set_error(true);
+            }
             sonya_diaglog_addf("rec", "end id=%u bytes=%d ble=1",
                                (unsigned)rec_store_cur_id(), rec_store_total_bytes());
             s_last_rec_end_tick = xTaskGetTickCount();
