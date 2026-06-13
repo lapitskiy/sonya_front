@@ -253,26 +253,13 @@ static esp_err_t render_message_screen(const char *msg, uint16_t fg, uint16_t bg
     return draw_line_text(y, msg, fg, bg);
 }
 
-static esp_err_t draw_checkmark(uint16_t color)
-{
-    const int box = 18;
-    for (int i = 0; i < 8; i++) {
-        ESP_RETURN_ON_ERROR(draw_rect(110 + i * 8, 250 + i * 8, box, box, color), TAG, "check left");
-    }
-    for (int i = 0; i < 16; i++) {
-        ESP_RETURN_ON_ERROR(draw_rect(170 + i * 8, 305 - i * 8, box, box, color), TAG, "check right");
-    }
-    return ESP_OK;
-}
-
 static esp_err_t render_ready_screen(void)
 {
     const uint16_t bg = rgb565(82, 112, 88);
     const uint16_t fg = rgb565(246, 238, 220);
     ESP_RETURN_ON_ERROR(draw_solid(bg), TAG, "ready bg");
-    ESP_RETURN_ON_ERROR(draw_time_block(fg, bg), TAG, "ready time");
-    ESP_RETURN_ON_ERROR(draw_checkmark(fg), TAG, "ready check");
-    ESP_RETURN_ON_ERROR(draw_center_text(370, "PRESS BTN", 5, fg, bg), TAG, "ready text");
+    ESP_RETURN_ON_ERROR(draw_center_text(210, "READY", 7, fg, bg), TAG, "ready text");
+    ESP_RETURN_ON_ERROR(draw_center_text(330, "PRESS BTN", 4, fg, bg), TAG, "ready hint");
     return ESP_OK;
 }
 

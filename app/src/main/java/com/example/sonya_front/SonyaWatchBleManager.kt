@@ -10,6 +10,7 @@ object SonyaWatchBleManager {
         fun onWatchLog(line: String)
         fun onWatchConnectedChanged(connected: Boolean)
         fun onWatchScanningChanged(scanning: Boolean)
+        fun onWatchGattReady()
         fun onWatchNotifyBytes(bytes: ByteArray)
     }
 
@@ -38,6 +39,9 @@ object SonyaWatchBleManager {
                 onScanningChanged = { scanning ->
                     dispatch { it.onWatchScanningChanged(scanning) }
                 },
+                onGattReady = {
+                    dispatch { it.onWatchGattReady() }
+                },
                 onNotifyBytes = { bytes ->
                     dispatch { it.onWatchNotifyBytes(bytes) }
                 },
@@ -54,6 +58,9 @@ object SonyaWatchBleManager {
         }
         listener.onWatchConnectedChanged(c.isConnected())
         listener.onWatchScanningChanged(c.isScanning())
+        if (c.isGattReady()) {
+            listener.onWatchGattReady()
+        }
         return c
     }
 

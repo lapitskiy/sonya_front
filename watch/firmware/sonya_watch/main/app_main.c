@@ -47,6 +47,7 @@ static TickType_t s_boot_tick = 0;
 static TickType_t s_last_activity_tick = 0;
 static bool s_auto_off_attempted = false;
 static bool s_time_received = false;
+static bool s_last_ble_connected = false;
 
 static void send_batt_status(const char *reason)
 {
@@ -191,6 +192,13 @@ static void mark_user_activity(const char *reason)
     ESP_LOGI(TAG, "AUTO_OFF: activity (%s)", reason ? reason : "n/a");
 }
 
+static void update_ble_activity(bool connected)
+{
+    if (connected == s_last_ble_connected) return;
+    s_last_ble_connected = connected;
+    mark_user_activity(connected ? "BLE_CONNECT" : "BLE_DISCONNECT");
+}
+
 static esp_err_t enter_auto_power_off(void)
 {
     ESP_LOGW(TAG, "AUTO_OFF: entering PMU power off");
@@ -208,6 +216,10 @@ static esp_err_t enter_auto_power_off(void)
 static void maybe_auto_power_off(TickType_t now)
 {
     if (s_auto_off_attempted || s_is_recording) return;
+    if (sonya_ble_is_connected()) {
+        s_auto_off_attempted = false;
+        return;
+    }
 
     const TickType_t timeout_ticks = pdMS_TO_TICKS(AUTO_POWER_OFF_IDLE_MS);
     const TickType_t ref_tick = (s_last_activity_tick != 0) ? s_last_activity_tick : s_boot_tick;
@@ -703,7 +715,9 @@ void app_main(void)
     for (;;) {
         pwrmon_tick();
         TickType_t loop_now = xTaskGetTickCount();
-        if (sonya_ble_is_connected() &&
+        bool ble_connected = sonya_ble_is_connected();
+        update_ble_activity(ble_connected);
+        if (ble_connected &&
             (s_last_batt_sent_tick == 0 || (loop_now - s_last_batt_sent_tick) >= pdMS_TO_TICKS(60000))) {
             send_batt_status("periodic");
         }
