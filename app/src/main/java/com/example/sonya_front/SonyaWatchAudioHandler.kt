@@ -301,7 +301,7 @@ class SonyaWatchAudioHandler(
                 callbacks.broadcastTransfer(
                     totalBytes = m.totalBytes,
                     offsetBytes = pendingOffset,
-                    bytesTotal = pcm.size().toInt(),
+                    bytesTotal = pcm.size().toLong(),
                 )
                 reportThroughput(data.size)
                 maybeBroadcastTransferProgress(total = m.totalBytes, offset = pendingOffset)
@@ -343,7 +343,7 @@ class SonyaWatchAudioHandler(
                         callbacks.broadcastTransfer(
                             totalBytes = meta.totalBytes,
                             offsetBytes = pendingOffset,
-                            bytesTotal = pcm.size().toInt(),
+                            bytesTotal = pcm.size().toLong(),
                         )
                         val remaining = meta.totalBytes - pendingOffset
                         callbacks.broadcastLog("live: missing ${remaining}B from off=$pendingOffset, pulling remainder")
