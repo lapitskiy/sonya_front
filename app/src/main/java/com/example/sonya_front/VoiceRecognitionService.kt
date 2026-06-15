@@ -104,6 +104,9 @@ class VoiceRecognitionService : Service() {
     private var watchConnReceiver: BroadcastReceiver? = null
     private var lastWatchConnectedState: Boolean? = null
 
+    // Приём BLE-аудио с часов в фоне (живёт в сервисе, а не в Activity/ViewModel).
+    private var watchAudioHandler: SonyaWatchAudioHandler? = null
+
     // Wake reaction phrase should be spoken BEFORE recording; we enter command mode only after TTS completes.
     @Volatile private var wakeTtsUtteranceId: String? = null
     @Volatile private var wakeAfterTts: Runnable? = null
@@ -186,6 +189,38 @@ class VoiceRecognitionService : Service() {
         // Состояние активной записи команды (для UI-кнопки "Отбой").
         val COMMAND_MODE_STATE_ACTION = "com.example.sonya_front.COMMAND_MODE_STATE"
         val EXTRA_COMMAND_MODE_ACTIVE = "command_mode_active"
+
+        // --- Часы: broadcasts от SonyaWatchAudioHandler к UI вкладки «Часы» ---
+        val WATCH_BATTERY_ACTION = "com.example.sonya_front.WATCH_BATTERY"
+        val EXTRA_BATT_PCT = "batt_pct"
+        val EXTRA_BATT_MV = "batt_mv"
+        val EXTRA_BATT_VBUS = "batt_vbus"
+        val EXTRA_BATT_CHG = "batt_chg"
+        val EXTRA_BATT_IN = "batt_in"
+        val EXTRA_BATT_PRESENT = "batt_present"
+        val EXTRA_BATT_ETA_MIN = "batt_eta_min"
+        val EXTRA_BATT_DRAIN = "batt_drain"
+        val EXTRA_BATT_NOTE = "batt_note"
+
+        val WATCH_TRANSFER_ACTION = "com.example.sonya_front.WATCH_TRANSFER"
+        val EXTRA_TRANSFER_TOTAL = "transfer_total"
+        val EXTRA_TRANSFER_OFFSET = "transfer_offset"
+        val EXTRA_TRANSFER_BYTES = "transfer_bytes"
+
+        val WATCH_EVENT_ACTION = "com.example.sonya_front.WATCH_EVENT"
+        val EXTRA_WATCH_EVENT = "watch_event"
+
+        val WATCH_LOG_ACTION = "com.example.sonya_front.WATCH_LOG"
+        val EXTRA_WATCH_LOG = "watch_log"
+
+        val WATCH_TRANSCRIPT_ACTION = "com.example.sonya_front.WATCH_TRANSCRIPT"
+        val EXTRA_WATCH_TRANSCRIPT = "watch_transcript"
+
+        val WATCH_WAV_PATH_ACTION = "com.example.sonya_front.WATCH_WAV_PATH"
+        val EXTRA_WATCH_WAV_PATH = "watch_wav_path"
+
+        val WATCH_RECORDING_ACTION = "com.example.sonya_front.WATCH_RECORDING"
+        val EXTRA_WATCH_RECORDING = "watch_recording"
     }
 
     // If TTS init is not ready yet, queue a few phrases (avoid "lost" confirms).
@@ -264,6 +299,93 @@ class VoiceRecognitionService : Service() {
             PendingActionsSync.syncNow(applicationContext, deviceId, reason = "service_start")
         }
         startOfflineRetryLoop()
+        startWatchAudioHandler()
+    }
+
+    /**
+     * Подключаем «ушко» для приёма BLE-аудио с часов в рамках сервиса.
+     * Живёт независимо от Activity: даже когда экран выключен и ViewModel убита,
+     * фреймы доходят сюда, накапливаются в PCM, распознаются и отправляются на сервер.
+     */
+    private fun startWatchAudioHandler() {
+        if (watchAudioHandler != null) return
+        val cb = object : SonyaWatchAudioHandler.Callbacks {
+            override fun serviceContext(): Context = applicationContext
+            override fun speak(text: String) = speakOnMain(text, queueMode = TextToSpeech.QUEUE_ADD)
+            override fun vibrate() = vibrateVoiceAck()
+            override fun broadcastStatus(status: String) = broadcastWatchStatus(status)
+            override fun broadcastLog(line: String) = broadcastWatchLog(line)
+            override fun broadcastEvent(event: String) = broadcastWatchEvent(event)
+            override fun broadcastBattery(
+                pct: Int?, bmv: Int?, vbusMv: Int?, charging: Boolean?, vbusIn: Boolean?,
+                batteryPresent: Boolean?, etaMin: Int?, drainMvPerMin: Int?, note: String,
+            ) = broadcastWatchBattery(
+                pct, bmv, vbusMv, charging, vbusIn, batteryPresent, etaMin, drainMvPerMin, note
+            )
+            override fun broadcastTransfer(totalBytes: Int, offsetBytes: Int, bytesTotal: Long) =
+                broadcastWatchTransfer(totalBytes, offsetBytes, bytesTotal)
+            override fun broadcastRecordingState(recording: Boolean) = broadcastWatchRecording(recording)
+            override fun broadcastTranscript(text: String) = broadcastWatchTranscript(text)
+            override fun broadcastWavPath(path: String) = broadcastWatchWavPath(path)
+        }
+        val ble = SonyaWatchBleManager.getClient(applicationContext)
+        watchAudioHandler = SonyaWatchAudioHandler(applicationContext, ble, cb).also { it.start() }
+    }
+
+    private fun stopWatchAudioHandler() {
+        watchAudioHandler?.stop()
+        watchAudioHandler = null
+    }
+
+    // --- Часы: рассылка UI-событий во вкладку «Часы» ---
+    private fun broadcastWatchStatus(status: String) {
+        sendBroadcast(Intent(STATUS_UPDATE_ACTION).putExtra(STATUS_UPDATE_TEXT, status))
+    }
+
+    private fun broadcastWatchLog(line: String) {
+        sendBroadcast(Intent(WATCH_LOG_ACTION).putExtra(EXTRA_WATCH_LOG, line))
+    }
+
+    private fun broadcastWatchEvent(event: String) {
+        sendBroadcast(Intent(WATCH_EVENT_ACTION).putExtra(EXTRA_WATCH_EVENT, event))
+    }
+
+    private fun broadcastWatchTranscript(text: String) {
+        sendBroadcast(Intent(WATCH_TRANSCRIPT_ACTION).putExtra(EXTRA_WATCH_TRANSCRIPT, text))
+    }
+
+    private fun broadcastWatchWavPath(path: String) {
+        sendBroadcast(Intent(WATCH_WAV_PATH_ACTION).putExtra(EXTRA_WATCH_WAV_PATH, path))
+    }
+
+    private fun broadcastWatchRecording(recording: Boolean) {
+        sendBroadcast(Intent(WATCH_RECORDING_ACTION).putExtra(EXTRA_WATCH_RECORDING, recording))
+    }
+
+    private fun broadcastWatchTransfer(totalBytes: Int, offsetBytes: Int, bytesTotal: Long) {
+        sendBroadcast(
+            Intent(WATCH_TRANSFER_ACTION)
+                .putExtra(EXTRA_TRANSFER_TOTAL, totalBytes)
+                .putExtra(EXTRA_TRANSFER_OFFSET, offsetBytes)
+                .putExtra(EXTRA_TRANSFER_BYTES, bytesTotal)
+        )
+    }
+
+    private fun broadcastWatchBattery(
+        pct: Int?, bmv: Int?, vbusMv: Int?, charging: Boolean?, vbusIn: Boolean?,
+        batteryPresent: Boolean?, etaMin: Int?, drainMvPerMin: Int?, note: String,
+    ) {
+        val i = Intent(WATCH_BATTERY_ACTION)
+        pct?.let { i.putExtra(EXTRA_BATT_PCT, it) }
+        bmv?.let { i.putExtra(EXTRA_BATT_MV, it) }
+        vbusMv?.let { i.putExtra(EXTRA_BATT_VBUS, it) }
+        charging?.let { i.putExtra(EXTRA_BATT_CHG, it) }
+        vbusIn?.let { i.putExtra(EXTRA_BATT_IN, it) }
+        batteryPresent?.let { i.putExtra(EXTRA_BATT_PRESENT, it) }
+        etaMin?.let { i.putExtra(EXTRA_BATT_ETA_MIN, it) }
+        drainMvPerMin?.let { i.putExtra(EXTRA_BATT_DRAIN, it) }
+        i.putExtra(EXTRA_BATT_NOTE, note)
+        sendBroadcast(i)
     }
 
     private fun setupRecognizers() {
@@ -1234,6 +1356,7 @@ class VoiceRecognitionService : Service() {
         stopNetworkWatcher()
         stopWakeWordSafely()
         destroySpeechRecognizerSafely()
+        stopWatchAudioHandler()
         unregisterWatchConnectionReceiver()
         try {
             tts?.stop()

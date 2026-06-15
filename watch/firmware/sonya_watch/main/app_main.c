@@ -26,7 +26,7 @@
 #include "power_mgr.h"
 #include "button_policy.h"
 #include "watch_result_ui.h"
-#include "watch_power.h"
+#include "watch_idle_off.h"
 #include "sdkconfig.h"
 #include "sonya_board.h"
 #include "esp_system.h"
@@ -186,30 +186,12 @@ static bool btn_released_stable_ms(int stable_ms)
 #endif
 }
 
-static void maybe_auto_power_off(TickType_t now)
+static void stop_audio_for_idle_off(void *arg)
 {
-    if (!power_mgr_should_auto_off(now, s_is_recording, link_state_is_connected(), NULL)) return;
-
-    if (watch_power_usb_present()) {
-        ESP_LOGW(TAG, "AUTO_OFF: USB/VBUS present -> keep running");
-        power_mgr_mark_activity("USB_POWER");
-        return;
-    }
-
-    status_ui_show_message("OFF", 700);
-    if (link_state_is_connected()) {
-        sonya_ble_send_evt_error("AUTO_POWEROFF:IDLE");
-    }
+    (void)arg;
     if (s_audio_streaming) {
         audio_cap_stop();
         s_audio_streaming = false;
-    }
-    (void)sonya_ble_set_conn_power_save(true);
-    vTaskDelay(pdMS_TO_TICKS(60));
-
-    esp_err_t off_err = watch_power_enter_auto_off();
-    if (off_err != ESP_OK) {
-        status_ui_set_error(true);
     }
 }
 
@@ -231,7 +213,7 @@ static void task_auto_power_off(void *arg)
 {
     (void)arg;
     for (;;) {
-        maybe_auto_power_off(xTaskGetTickCount());
+        watch_idle_off_tick(s_is_recording, s_audio_streaming, stop_audio_for_idle_off, NULL);
         vTaskDelay(pdMS_TO_TICKS(500));
     }
 }

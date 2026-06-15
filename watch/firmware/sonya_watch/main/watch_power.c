@@ -50,8 +50,9 @@ bool watch_power_usb_present(void)
         ESP_LOGW(TAG, "USB/VBUS status read failed: %d", (int)err);
         return false;
     }
-    if (vbus_in || vbus_mv > 3500) {
-        ESP_LOGI(TAG, "PMU VBUS active vbus_in=%d vbus_mv=%u", vbus_in ? 1 : 0, (unsigned)vbus_mv);
+    if (vbus_in || charging || vbus_mv > 4400) {
+        ESP_LOGI(TAG, "PMU VBUS active vbus_in=%d charging=%d vbus_mv=%u",
+                 vbus_in ? 1 : 0, charging ? 1 : 0, (unsigned)vbus_mv);
         return true;
     }
     return false;
