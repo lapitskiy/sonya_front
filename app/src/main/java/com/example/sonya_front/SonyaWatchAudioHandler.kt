@@ -33,6 +33,12 @@ class SonyaWatchAudioHandler(
     private val callbacks: Callbacks,
 ) : SonyaWatchBleManager.Listener {
 
+    companion object {
+        // Firmware (power_mgr) гасит часы через AUTO_POWER_OFF_IDLE_MS=30s без входящего BLE-пакета.
+        // Держим интервал заметно меньше, чтобы успевать до таймаута даже при редких задержках планировщика.
+        private const val KEEP_ALIVE_INTERVAL_MS = 15_000L
+    }
+
     /** Проброс событий, не зависящих от UI, обратно вызывающей стороне (сервису). */
     interface Callbacks {
         /** Контекст для отправки Intent в VoiceRecognitionService. */
@@ -109,6 +115,7 @@ class SonyaWatchAudioHandler(
     private var lastBroadcastProgressPct: Int = -1
     private var pendingDoneRecId: Int = -1
     private var doneRetryJob: Job? = null
+    private var keepAliveJob: Job? = null
 
     private data class BattPoint(val atMs: Long, val mv: Int)
     private val battHistory = ArrayList<BattPoint>(16)
@@ -127,6 +134,7 @@ class SonyaWatchAudioHandler(
         scope.cancel()
         doneRetryJob?.cancel()
         pullTimeoutJob?.cancel()
+        keepAliveJob?.cancel()
     }
 
     // ---- SonyaWatchBleManager.Listener ----
@@ -142,6 +150,8 @@ class SonyaWatchAudioHandler(
             callbacks.broadcastEvent("BLE подключено (готовлю GATT)…")
         } else {
             readyVibrationPending = false
+            keepAliveJob?.cancel()
+            keepAliveJob = null
             resetProtocolState()
             callbacks.broadcastEvent("Ожидаю подключения к часам…")
         }
@@ -158,6 +168,19 @@ class SonyaWatchAudioHandler(
             sendPing()
             delay(1500L)
             sendPing()
+        }
+        // Часы гасятся через firmware-таймер power_mgr, если 30 сек нет ни одного входящего
+        // BLE-пакета (GATT connect сам по себе активностью не считается — иначе телефонный
+        // авто-reconnect мог бы бесконечно держать часы включёнными). Пока приложение реально
+        // живо и GATT готов, шлём лёгкий keepalive чаще этого таймаута, чтобы открытая сессия
+        // не гасла по idle, пока ею не воспользовались (см. watch/md/архитектура-состояний.md).
+        keepAliveJob?.cancel()
+        keepAliveJob = scope.launch {
+            while (true) {
+                delay(KEEP_ALIVE_INTERVAL_MS)
+                if (!ble.isGattReady()) break
+                sendPing()
+            }
         }
     }
 
