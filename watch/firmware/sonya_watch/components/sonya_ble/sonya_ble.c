@@ -119,6 +119,16 @@ static int apply_conn_params(bool power_save);
 
 static void on_connect(struct ble_gap_event *event, void *arg)
 {
+    if (event->connect.status != 0) {
+        // Failed connect attempt: NimBLE stops advertising, so we must restart it,
+        // otherwise the watch shows "BLE ADV" while actually being silent.
+        conn_handle = BLE_HS_CONN_HANDLE_NONE;
+        ESP_LOGW(TAG, "BLE connect failed, status=%d -> restart advertising", event->connect.status);
+        sonya_diaglog_addf("ble", "connect fail status=%d", (int)event->connect.status);
+        arm_fast_adv_window(BLE_FAST_ADV_RECONNECT_MS);
+        start_advertising();
+        return;
+    }
     conn_handle = event->connect.conn_handle;
     ESP_LOGI(TAG, "BLE connected, conn_handle=%d", conn_handle);
     sonya_diaglog_addf("ble", "connect h=%d", (int)conn_handle);

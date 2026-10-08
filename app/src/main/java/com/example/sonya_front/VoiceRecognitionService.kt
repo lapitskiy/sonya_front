@@ -283,6 +283,9 @@ class VoiceRecognitionService : Service() {
             tts = null
         }
 
+        // Сервис может стартовать без Activity (START_STICKY/перезапуск процесса) —
+        // без этого кольцевой лог и его отправка на бэк не заработают.
+        Log.initialize(applicationContext)
         createNotificationChannel()
         startForeground(1, createNotification())
         registerWatchConnectionReceiver()

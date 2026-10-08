@@ -217,6 +217,9 @@ object ApiClient {
     private const val EXTERNAL_BASE_URL = "http://188.243.119.154:18000/"
     private const val LOCAL_BASE_URL = "http://192.168.0.50:18000/"
 
+    /** Базовый URL внешнего бэка (со слэшем на конце) — для запросов вне Retrofit (загрузка логов). */
+    val baseUrl: String get() = EXTERNAL_BASE_URL
+
     private val moshi = Moshi.Builder()
         .add(KotlinJsonAdapterFactory())
         .build()
