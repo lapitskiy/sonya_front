@@ -7,6 +7,7 @@
 #include "link_state.h"
 #include "power_mgr.h"
 #include "sonya_ble.h"
+#include "sonya_diaglog.h"
 #include "status_ui.h"
 #include "watch_power.h"
 
@@ -46,5 +47,44 @@ void watch_idle_off_tick(bool recording,
         ESP_LOGW(TAG, "idle auto-off failed err=%d -> retry", (int)off_err);
         status_ui_set_error(true);
         power_mgr_delay_auto_off_retry(3000, "PMU_FAIL");
+    }
+}
+
+void watch_idle_off_force(const char *reason,
+                          bool recording,
+                          bool audio_streaming,
+                          watch_idle_off_stop_audio_fn_t stop_audio,
+                          void *stop_audio_arg)
+{
+    const char *r = reason ? reason : "?";
+
+    if (recording) {
+        ESP_LOGW(TAG, "forced power-off ignored: recording in progress (%s)", r);
+        return;
+    }
+
+    if (watch_power_usb_present()) {
+        ESP_LOGW(TAG, "forced power-off blocked by live USB/VBUS (%s)", r);
+        status_ui_show_message("USB", 700);
+        return;
+    }
+
+    ESP_LOGW(TAG, "forced power-off start (%s) link=%s audio=%d",
+             r, link_state_name(link_state_get()), audio_streaming ? 1 : 0);
+    sonya_diaglog_addf("sys", "forced_off reason=%s", r);
+    status_ui_show_message("OFF", 700);
+    if (link_state_is_connected()) {
+        sonya_ble_send_evt_error("POWEROFF:BUTTON");
+    }
+    if (audio_streaming && stop_audio) {
+        stop_audio(stop_audio_arg);
+    }
+    (void)sonya_ble_set_conn_power_save(true);
+    vTaskDelay(pdMS_TO_TICKS(60));
+
+    esp_err_t off_err = watch_power_enter_auto_off();
+    if (off_err != ESP_OK) {
+        ESP_LOGW(TAG, "forced power-off failed err=%d", (int)off_err);
+        status_ui_set_error(true);
     }
 }

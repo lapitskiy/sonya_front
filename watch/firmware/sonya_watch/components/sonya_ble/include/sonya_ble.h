@@ -69,5 +69,31 @@ int sonya_ble_send_evt_error(const char *msg);
  */
 int sonya_ble_set_conn_power_save(bool enable);
 
+/**
+ * @brief UI hints for the disconnected state, so the screen can show something more specific
+ * than a generic "advertising" label. Each hint auto-expires a few seconds after the event
+ * that set it (except ADV_ERR, which keeps refreshing itself while the error persists).
+ */
+typedef enum {
+    SONYA_BLE_UI_HINT_NONE = 0,
+    SONYA_BLE_UI_HINT_LOST,     // just disconnected
+    SONYA_BLE_UI_HINT_RETRY,    // last incoming connect attempt failed
+    SONYA_BLE_UI_HINT_ADV_ERR,  // advertising itself failed to (re)start
+} sonya_ble_ui_hint_t;
+
+/**
+ * @brief Current disconnected-state UI hint (or SONYA_BLE_UI_HINT_NONE if none/expired).
+ * Safe to call frequently (e.g. every ~100ms from the status screen task).
+ */
+sonya_ble_ui_hint_t sonya_ble_ui_hint(void);
+
+/**
+ * @brief Watchdog: call periodically (e.g. once per main-loop iteration). If we are not
+ * connected and advertising isn't actually running (e.g. a previous start failed), retries it.
+ * Without this, a single failed internal start-advertising call could leave the radio silent
+ * indefinitely while the UI still claims we're advertising.
+ */
+void sonya_ble_ensure_advertising(void);
+
 // Legacy v0 helper used by current app_main; kept for compatibility.
 // Prefer sonya_ble_send_frame for custom protocol types.

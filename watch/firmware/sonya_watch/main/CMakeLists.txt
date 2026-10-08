@@ -9,6 +9,7 @@ idf_component_register(
         "watch_result_ui.c"
         "watch_power.c"
         "watch_idle_off.c"
+        "pwr_button.c"
     INCLUDE_DIRS "."
     REQUIRES
         nvs_flash

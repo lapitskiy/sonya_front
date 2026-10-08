@@ -404,6 +404,11 @@ class SonyaWatchBleClient(
                         notifyEnableRequested = false
                     }
                     if (autoEnabled) {
+                        // Watch only fast-advertises for a few seconds right after a drop
+                        // (BLE_FAST_ADV_RECONNECT_MS); without our own fast scan window here,
+                        // the next scan uses the slow 6s/15s cadence and can easily miss that
+                        // window, making reconnect take anywhere from seconds to minutes.
+                        triggerFastWindow("disconnect")
                         scheduleNextAutoTick(3_000L)
                     }
                 }

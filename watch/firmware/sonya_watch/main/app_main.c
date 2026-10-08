@@ -27,6 +27,7 @@
 #include "button_policy.h"
 #include "watch_result_ui.h"
 #include "watch_idle_off.h"
+#include "pwr_button.h"
 #include "sdkconfig.h"
 #include "sonya_board.h"
 #include "esp_system.h"
@@ -679,6 +680,7 @@ void app_main(void)
 
     link_state_init();
     power_mgr_init(AUTO_POWER_OFF_IDLE_MS);
+    pwr_button_init();
     xTaskCreate(task_link_state_sync, "link_state", 3072, NULL, 5, NULL);
     xTaskCreate(task_auto_power_off, "auto_off", 3072, NULL, 5, NULL);
     TickType_t boot_ready = xTaskGetTickCount() + pdMS_TO_TICKS(2000);
@@ -692,6 +694,15 @@ void app_main(void)
             (s_last_batt_sent_tick == 0 || (loop_now - s_last_batt_sent_tick) >= pdMS_TO_TICKS(60000))) {
             send_batt_status("periodic");
         }
+        // 2 short PWR presses within the window = user wants to power off now, without
+        // holding the button for the hardware's 3-5s long-press-off.
+        if (pwr_button_tick(sonya_board_pmu_poll_short_press())) {
+            watch_idle_off_force("BUTTON2X", s_is_recording, s_audio_streaming,
+                                 stop_audio_for_idle_off, NULL);
+        }
+        // Guard against a one-off failed start_advertising() call leaving the radio silent
+        // while the UI still claims "advertising" (see sonya_ble_ensure_advertising()).
+        sonya_ble_ensure_advertising();
         bool trig = wake_poll_or_wait(100);
         if (!trig) continue;
         TickType_t now = xTaskGetTickCount();

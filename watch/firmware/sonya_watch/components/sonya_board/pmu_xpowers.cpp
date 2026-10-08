@@ -98,6 +98,13 @@ extern "C" esp_err_t sonya_board_pmu_init(void)
     // Charging stability on boards without TS thermistor
     s_pmu.disableTSPinMeasure();
 
+    // Report PWR-button short presses via I2C-polled IRQ status (no extra GPIO wiring).
+    // The hardware long-press-off (hold 3-5s) is a separate PMU feature and is unaffected.
+    // (Long IRQ enabled too, even though we don't act on it: the hardware cuts power on long
+    // press before we'd see it anyway, and it costs nothing to leave enabled for future use.)
+    s_pmu.clearIrqStatus();
+    s_pmu.enableIRQ(XPOWERS_AXP2101_PKEY_SHORT_IRQ | XPOWERS_AXP2101_PKEY_LONG_IRQ);
+
     // Enable ADC channels so we can read voltages reliably
     s_pmu.enableGeneralAdcChannel();
     s_pmu.enableVbusVoltageMeasure();
@@ -171,5 +178,23 @@ extern "C" esp_err_t sonya_board_power_off(void)
     sonya_diaglog_add("pmu", "power_off:req");
     s_pmu.shutdown();
     return ESP_OK;
+}
+
+extern "C" bool sonya_board_pmu_poll_short_press(void)
+{
+    if (!s_pmu_ready) {
+        return false;
+    }
+    // getIrqStatus() refreshes the cached INTSTS registers from I2C; isPekeyShortPressIrq()
+    // reads the cached short-press bit. Clear right after so each physical press is reported
+    // exactly once. (We also clear on a long-press hit even though we don't report it here,
+    // so a long press doesn't leave a stale short-press-adjacent bit lingering.)
+    s_pmu.getIrqStatus();
+    const bool pressed = s_pmu.isPekeyShortPressIrq();
+    const bool pressed_long = s_pmu.isPekeyLongPressIrq();
+    if (pressed || pressed_long) {
+        s_pmu.clearIrqStatus();
+    }
+    return pressed;
 }
 

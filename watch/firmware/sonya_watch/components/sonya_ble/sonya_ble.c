@@ -39,6 +39,10 @@ static uint16_t tx_seq;
 static uint8_t tx_queue[256];
 static uint8_t s_own_addr_type;
 static TickType_t s_fast_adv_until_tick;
+static volatile bool s_advertising = false;
+static volatile sonya_ble_ui_hint_t s_ui_hint = SONYA_BLE_UI_HINT_NONE;
+static volatile TickType_t s_ui_hint_until_tick = 0;
+static TickType_t s_adv_watchdog_last_retry_tick = 0;
 
 #define TX_QUEUE_MAX (sizeof(tx_queue) - PROTO_FRAME_HEADER_SIZE)
 // Pacing is important: back-to-back notifications can exhaust NimBLE mbufs on ESP32-S3,
@@ -48,7 +52,11 @@ static TickType_t s_fast_adv_until_tick;
 #define BLE_NOTIFY_RETRY_MAX 200
 #define BLE_NOTIFY_RETRY_DELAY_MS 10
 #define BLE_FAST_ADV_BOOT_MS 15000
-#define BLE_FAST_ADV_RECONNECT_MS 5000
+// Was 5000ms: too short to reliably overlap with the phone's own post-disconnect fast-scan
+// window, which made real-world reconnect take anywhere from seconds to several minutes.
+#define BLE_FAST_ADV_RECONNECT_MS 12000
+#define BLE_UI_HINT_WINDOW_MS 2500
+#define BLE_ADV_WATCHDOG_RETRY_MS 2000
 
 static void arm_fast_adv_window(uint32_t ms)
 {
@@ -59,6 +67,12 @@ static bool is_fast_adv_window(void)
 {
     TickType_t now = xTaskGetTickCount();
     return ((int32_t)(s_fast_adv_until_tick - now) > 0);
+}
+
+static void set_ui_hint(sonya_ble_ui_hint_t hint)
+{
+    s_ui_hint = hint;
+    s_ui_hint_until_tick = xTaskGetTickCount() + pdMS_TO_TICKS(BLE_UI_HINT_WINDOW_MS);
 }
 
 static int gatt_access(uint16_t conn, uint16_t attr_handle,
@@ -125,11 +139,14 @@ static void on_connect(struct ble_gap_event *event, void *arg)
         conn_handle = BLE_HS_CONN_HANDLE_NONE;
         ESP_LOGW(TAG, "BLE connect failed, status=%d -> restart advertising", event->connect.status);
         sonya_diaglog_addf("ble", "connect fail status=%d", (int)event->connect.status);
+        set_ui_hint(SONYA_BLE_UI_HINT_RETRY);
         arm_fast_adv_window(BLE_FAST_ADV_RECONNECT_MS);
         start_advertising();
         return;
     }
     conn_handle = event->connect.conn_handle;
+    s_advertising = false; // NimBLE stops advertising once connected.
+    s_ui_hint = SONYA_BLE_UI_HINT_NONE;
     ESP_LOGI(TAG, "BLE connected, conn_handle=%d", conn_handle);
     sonya_diaglog_addf("ble", "connect h=%d", (int)conn_handle);
     // Keep link fast right after connect so phone can complete MTU/service/CCCD quickly.
@@ -141,6 +158,7 @@ static void on_disconnect(struct ble_gap_event *event, void *arg)
     conn_handle = BLE_HS_CONN_HANDLE_NONE;
     ESP_LOGI(TAG, "BLE disconnected, reason=%d", event->disconnect.reason);
     sonya_diaglog_addf("ble", "disconnect reason=%d", (int)event->disconnect.reason);
+    set_ui_hint(SONYA_BLE_UI_HINT_LOST);
     arm_fast_adv_window(BLE_FAST_ADV_RECONNECT_MS);
     start_advertising();
 }
@@ -172,6 +190,11 @@ static int gap_event(struct ble_gap_event *event, void *arg)
 
 static int start_advertising(void)
 {
+    // Only set true on confirmed success below. If this call fails for any reason, the
+    // watchdog (sonya_ble_ensure_advertising) will see s_advertising == false and retry,
+    // instead of leaving the radio silently dead while the UI still says "advertising".
+    s_advertising = false;
+
     struct ble_hs_adv_fields fields;
     memset(&fields, 0, sizeof(fields));
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
@@ -182,6 +205,7 @@ static int start_advertising(void)
     int rc = ble_gap_adv_set_fields(&fields);
     if (rc) {
         ESP_LOGE(TAG, "adv_set_fields err %d", rc);
+        set_ui_hint(SONYA_BLE_UI_HINT_ADV_ERR);
         return rc;
     }
 
@@ -206,8 +230,10 @@ static int start_advertising(void)
                            &adv_params, gap_event, NULL);
     if (rc) {
         ESP_LOGE(TAG, "adv start err %d", rc);
+        set_ui_hint(SONYA_BLE_UI_HINT_ADV_ERR);
         return rc;
     }
+    s_advertising = true;
     ESP_LOGI(TAG, "BLE advertising started, name=%s profile=%s", device_name, fast_adv ? "FAST" : "SLOW");
     return 0;
 }
@@ -412,4 +438,31 @@ int sonya_ble_set_conn_power_save(bool enable)
 {
     s_conn_power_save = enable;
     return apply_conn_params(enable);
+}
+
+sonya_ble_ui_hint_t sonya_ble_ui_hint(void)
+{
+    if (s_ui_hint == SONYA_BLE_UI_HINT_NONE) return SONYA_BLE_UI_HINT_NONE;
+    TickType_t now = xTaskGetTickCount();
+    if ((int32_t)(s_ui_hint_until_tick - now) <= 0) {
+        s_ui_hint = SONYA_BLE_UI_HINT_NONE;
+        return SONYA_BLE_UI_HINT_NONE;
+    }
+    return s_ui_hint;
+}
+
+void sonya_ble_ensure_advertising(void)
+{
+    if (conn_handle != BLE_HS_CONN_HANDLE_NONE) return;
+    if (s_advertising) return;
+
+    TickType_t now = xTaskGetTickCount();
+    if (s_adv_watchdog_last_retry_tick != 0 &&
+        (now - s_adv_watchdog_last_retry_tick) < pdMS_TO_TICKS(BLE_ADV_WATCHDOG_RETRY_MS)) {
+        return;
+    }
+    s_adv_watchdog_last_retry_tick = now;
+    ESP_LOGW(TAG, "adv watchdog: not advertising while disconnected -> retry");
+    sonya_diaglog_addf("ble", "adv_watchdog retry");
+    start_advertising();
 }

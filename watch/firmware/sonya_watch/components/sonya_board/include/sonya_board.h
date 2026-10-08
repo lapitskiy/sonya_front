@@ -42,6 +42,19 @@ esp_err_t sonya_board_pmu_read_status(int *batt_pct,
  */
 esp_err_t sonya_board_power_off(void);
 
+/**
+ * Poll + consume one PWR-button short-press event from the PMU (AXP2101 PEK short-press IRQ).
+ *
+ * No extra GPIO wiring needed: the PMU reports this over the same I2C bus already used for
+ * battery/VBUS status, so this is meant to be called periodically (e.g. every ~100ms from the
+ * main loop) alongside sonya_board_pmu_read_status(). Returns true at most once per physical
+ * short press (the underlying IRQ status is cleared internally after reading it).
+ *
+ * The PMU's own hardware long-press-off (hold 3-5s) is independent of this and keeps working
+ * even if nothing ever calls this function.
+ */
+bool sonya_board_pmu_poll_short_press(void);
+
 #ifdef __cplusplus
 }
 #endif

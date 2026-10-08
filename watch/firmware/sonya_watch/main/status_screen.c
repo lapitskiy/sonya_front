@@ -1,6 +1,7 @@
 #include "status_screen.h"
 
 #include "link_state.h"
+#include "sonya_ble.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -286,6 +287,7 @@ static esp_err_t render_boot_splash(void)
 }
 
 static void status_pick_main(bool conn, bool app_ready, bool rec, bool err,
+                             sonya_ble_ui_hint_t hint,
                              const char **out_msg, uint16_t *out_fg, uint16_t *out_bg)
 {
     if (err) {
@@ -312,12 +314,30 @@ static void status_pick_main(bool conn, bool app_ready, bool rec, bool err,
         *out_bg = rgb565(96, 105, 96);
         return;
     }
-    *out_msg = "BLE ADV";
+
+    // Not connected: say something more honest than a generic "advertising" when we
+    // actually know *why* (just dropped / last connect failed / radio itself failed to
+    // (re)start) instead of implying the phone's absence.
+    switch (hint) {
+    case SONYA_BLE_UI_HINT_LOST:
+        *out_msg = "LOST";
+        break;
+    case SONYA_BLE_UI_HINT_RETRY:
+        *out_msg = "RETRY";
+        break;
+    case SONYA_BLE_UI_HINT_ADV_ERR:
+        *out_msg = "ADV ERR";
+        break;
+    default:
+        *out_msg = "NO LINK";
+        break;
+    }
     *out_fg = rgb565(246, 238, 220);
     *out_bg = rgb565(93, 86, 75);
 }
 
-static esp_err_t render_main_status(bool conn, bool app_ready, bool rec, bool err)
+static esp_err_t render_main_status(bool conn, bool app_ready, bool rec, bool err,
+                                    sonya_ble_ui_hint_t hint)
 {
     if (app_ready && !rec && !err) {
         return render_ready_screen();
@@ -326,7 +346,7 @@ static esp_err_t render_main_status(bool conn, bool app_ready, bool rec, bool er
     const char *msg = NULL;
     uint16_t fg = 0;
     uint16_t bg = 0;
-    status_pick_main(conn, app_ready, rec, err, &msg, &fg, &bg);
+    status_pick_main(conn, app_ready, rec, err, hint, &msg, &fg, &bg);
     return render_message_screen(msg, fg, bg);
 }
 
@@ -398,6 +418,7 @@ static void task_screen(void *arg)
     bool last_msg_active = false;
     bool last_time_synced = false;
     long last_time_minute = -1;
+    sonya_ble_ui_hint_t last_hint = SONYA_BLE_UI_HINT_NONE;
     bool first = true;
 
     for (;;) {
@@ -406,6 +427,7 @@ static void task_screen(void *arg)
         bool rec = s_recording;
         bool err = s_error;
         bool time_synced = s_time_synced;
+        sonya_ble_ui_hint_t hint = conn ? SONYA_BLE_UI_HINT_NONE : sonya_ble_ui_hint();
         long time_minute = -1;
         if (time_synced) {
             time_t wall = time(NULL) + ((time_t)s_tz_offset_min * 60);
@@ -423,7 +445,8 @@ static void task_screen(void *arg)
                        (rec != last_rec) || (err != last_err) ||
                        (msg_active != last_msg_active) ||
                        (time_synced != last_time_synced) ||
-                       (time_minute != last_time_minute);
+                       (time_minute != last_time_minute) ||
+                       (hint != last_hint);
 
         if (changed) {
             first = false;
@@ -431,7 +454,7 @@ static void task_screen(void *arg)
             if (msg_active) {
                 e = render_message_screen(s_msg, rgb565(246, 238, 220), rgb565(46, 43, 38));
             } else {
-                e = render_main_status(conn, app_ready, rec, err);
+                e = render_main_status(conn, app_ready, rec, err, hint);
             }
             if (e != ESP_OK) ESP_LOGW(TAG, "render failed: %s", esp_err_to_name(e));
 
@@ -442,6 +465,7 @@ static void task_screen(void *arg)
             last_msg_active = msg_active;
             last_time_synced = time_synced;
             last_time_minute = time_minute;
+            last_hint = hint;
         }
 
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -462,7 +486,9 @@ void status_screen_set_app_ready(bool ready)
 {
     s_app_ready = ready;
     if (s_panel) {
-        esp_err_t e = render_main_status(link_state_is_connected(), ready, s_recording, s_error);
+        bool conn = link_state_is_connected();
+        esp_err_t e = render_main_status(conn, ready, s_recording, s_error,
+                                         conn ? SONYA_BLE_UI_HINT_NONE : sonya_ble_ui_hint());
         if (e != ESP_OK) ESP_LOGW(TAG, "render app_ready failed: %s", esp_err_to_name(e));
     }
 }
@@ -473,7 +499,9 @@ void status_screen_set_time(time_t epoch, int16_t tz_offset_min)
     s_tz_offset_min = tz_offset_min;
     s_time_synced = true;
     if (s_panel) {
-        esp_err_t e = render_main_status(link_state_is_connected(), s_app_ready, s_recording, s_error);
+        bool conn = link_state_is_connected();
+        esp_err_t e = render_main_status(conn, s_app_ready, s_recording, s_error,
+                                         conn ? SONYA_BLE_UI_HINT_NONE : sonya_ble_ui_hint());
         if (e != ESP_OK) ESP_LOGW(TAG, "render time failed: %s", esp_err_to_name(e));
     }
 }
@@ -574,7 +602,7 @@ void status_screen_init(void)
     ESP_ERROR_CHECK(render_boot_splash());
 
     // Show status immediately after splash.
-    ESP_ERROR_CHECK(render_main_status(false, false, false, false));
+    ESP_ERROR_CHECK(render_main_status(false, false, false, false, SONYA_BLE_UI_HINT_NONE));
 
     xTaskCreate(task_screen, "status_screen", 4096, NULL, 5, NULL);
 #else
