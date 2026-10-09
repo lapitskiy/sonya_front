@@ -5,6 +5,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 #include "esp_log.h"
 #include "esp_check.h"
@@ -43,6 +44,26 @@ static const char *TAG = "status_screen";
 
 static esp_lcd_panel_handle_t s_panel = NULL;
 static esp_lcd_panel_io_handle_t __attribute__((unused)) s_io = NULL;
+
+// Guards s_panel + the static scratch buffers in draw_solid()/draw_text_at(): task_screen()
+// (the normal renderer) and the NimBLE host task (status_screen_set_app_ready/set_time, fired
+// on every PING/TIME from a connected phone) both used to call straight into these without any
+// lock. Those draw functions keep their pixel buffer in a `static` local between calls to avoid
+// reallocating every frame -- two tasks racing in there could free() it out from under one
+// another mid-DMA-transfer (classic use-after-free), which is almost certainly why a
+// double-press power-off would wedge forever right after painting "OFF" while a phone was
+// connected (connected == frequent concurrent draws from the BLE RX path).
+static SemaphoreHandle_t s_panel_mu = NULL;
+
+static inline void panel_lock(void)
+{
+    if (s_panel_mu) xSemaphoreTake(s_panel_mu, portMAX_DELAY);
+}
+
+static inline void panel_unlock(void)
+{
+    if (s_panel_mu) xSemaphoreGive(s_panel_mu);
+}
 
 static volatile bool s_recording = false;
 static volatile bool s_error = false;
@@ -168,6 +189,7 @@ static esp_err_t draw_text_at(int x0, int y, const char *str, int scale, uint16_
     int ye = ((y + line_h) >> 1) << 1;
     if (ye <= ys) ye = ys + 2;
 
+    panel_lock();
     static uint16_t *buf = NULL;
     static size_t buf_px = 0;
     const int h = ye - ys;
@@ -175,7 +197,10 @@ static esp_err_t draw_text_at(int x0, int y, const char *str, int scale, uint16_
     if (!buf || buf_px != want_px) {
         if (buf) heap_caps_free(buf);
         buf = (uint16_t *)heap_caps_malloc(want_px * sizeof(uint16_t), MALLOC_CAP_DMA);
-        if (!buf) return ESP_ERR_NO_MEM;
+        if (!buf) {
+            panel_unlock();
+            return ESP_ERR_NO_MEM;
+        }
         buf_px = want_px;
     }
 
@@ -210,7 +235,9 @@ static esp_err_t draw_text_at(int x0, int y, const char *str, int scale, uint16_
         }
     }
 
-    return esp_lcd_panel_draw_bitmap(s_panel, 0, ys, LCD_H_RES, ye, buf);
+    esp_err_t ret = esp_lcd_panel_draw_bitmap(s_panel, 0, ys, LCD_H_RES, ye, buf);
+    panel_unlock();
+    return ret;
 }
 
 static esp_err_t draw_line_text(int y, const char *str, uint16_t fg, uint16_t bg)
@@ -355,6 +382,7 @@ static esp_err_t draw_solid(uint16_t color565)
     if (!s_panel) return ESP_ERR_INVALID_STATE;
 
     const int chunk_lines = 8;
+    panel_lock();
     static uint16_t *buf = NULL;
     static size_t buf_px = 0;
 
@@ -362,13 +390,17 @@ static esp_err_t draw_solid(uint16_t color565)
     if (!buf || buf_px != want_px) {
         // Allocate once; small buffer (410*8*2 ~ 6.6 KB)
         buf = (uint16_t *)heap_caps_malloc(want_px * sizeof(uint16_t), MALLOC_CAP_DMA);
-        if (!buf) return ESP_ERR_NO_MEM;
+        if (!buf) {
+            panel_unlock();
+            return ESP_ERR_NO_MEM;
+        }
         buf_px = want_px;
     }
 
     const uint16_t color_panel = panel_rgb565(color565);
     for (size_t i = 0; i < buf_px; i++) buf[i] = color_panel;
 
+    esp_err_t ret = ESP_OK;
     for (int y = 0; y < LCD_V_RES; y += chunk_lines) {
         int y_end = y + chunk_lines;
         if (y_end > LCD_V_RES) y_end = LCD_V_RES;
@@ -376,10 +408,15 @@ static esp_err_t draw_solid(uint16_t color565)
         int ys = (y >> 1) << 1;
         int ye = (y_end >> 1) << 1;
         if (ye <= ys) ye = ys + 2;
-        ESP_RETURN_ON_ERROR(esp_lcd_panel_draw_bitmap(s_panel, 0, ys, LCD_H_RES, ye, buf), TAG, "draw_bitmap");
+        ret = esp_lcd_panel_draw_bitmap(s_panel, 0, ys, LCD_H_RES, ye, buf);
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "draw_bitmap failed: %s", esp_err_to_name(ret));
+            break;
+        }
     }
 
-    return ESP_OK;
+    panel_unlock();
+    return ret;
 }
 
 static esp_err_t draw_rect(int x, int y, int w, int h, uint16_t color565)
@@ -402,7 +439,9 @@ static esp_err_t draw_rect(int x, int y, int w, int h, uint16_t color565)
     if (!buf) return ESP_ERR_NO_MEM;
     const uint16_t color_panel = panel_rgb565(color565);
     for (size_t i = 0; i < want_px; i++) buf[i] = color_panel;
+    panel_lock();
     esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel, xs, ys, xe, ye, buf);
+    panel_unlock();
     heap_caps_free(buf);
     return err;
 }
@@ -484,26 +523,20 @@ void status_screen_set_error(bool error)
 
 void status_screen_set_app_ready(bool ready)
 {
+    // State only -- task_screen() is the sole renderer (see s_panel_mu comment above).
+    // This is called from the BLE RX path (NimBLE host task, on every PING/TIME from a
+    // connected phone), so rendering here directly used to mean up to 3 tasks could end up
+    // touching the panel/static draw buffers concurrently. task_screen() polls every 100ms
+    // and already diffs this exact flag, so the extra latency here is imperceptible.
     s_app_ready = ready;
-    if (s_panel) {
-        bool conn = link_state_is_connected();
-        esp_err_t e = render_main_status(conn, ready, s_recording, s_error,
-                                         conn ? SONYA_BLE_UI_HINT_NONE : sonya_ble_ui_hint());
-        if (e != ESP_OK) ESP_LOGW(TAG, "render app_ready failed: %s", esp_err_to_name(e));
-    }
 }
 
 void status_screen_set_time(time_t epoch, int16_t tz_offset_min)
 {
     (void)epoch;
+    // State only -- see status_screen_set_app_ready() above.
     s_tz_offset_min = tz_offset_min;
     s_time_synced = true;
-    if (s_panel) {
-        bool conn = link_state_is_connected();
-        esp_err_t e = render_main_status(conn, s_app_ready, s_recording, s_error,
-                                         conn ? SONYA_BLE_UI_HINT_NONE : sonya_ble_ui_hint());
-        if (e != ESP_OK) ESP_LOGW(TAG, "render time failed: %s", esp_err_to_name(e));
-    }
 }
 
 void status_screen_show_message(const char *msg, uint32_t ms)
@@ -525,18 +558,25 @@ void status_screen_show_message(const char *msg, uint32_t ms)
         }
     }
     s_msg[i] = '\0';
+    // State only -- see status_screen_set_app_ready() above. In particular, this is the call
+    // the PWR-double-press power-off path uses to show "OFF": rendering synchronously from
+    // whatever caller task hit this (main loop) used to race task_screen()'s own render of
+    // the very same message, both touching the same static scratch buffers in draw_text_at().
     s_msg_until_tick = xTaskGetTickCount() + pdMS_TO_TICKS(ms);
     ESP_LOGI(TAG, "show message '%s' ms=%lu", s_msg, (unsigned long)ms);
-    if (s_panel) {
-        esp_err_t e = render_message_screen(s_msg, rgb565(246, 238, 220), rgb565(46, 43, 38));
-        if (e != ESP_OK) ESP_LOGW(TAG, "render message failed: %s", esp_err_to_name(e));
-    }
 }
 
 void status_screen_init(void)
 {
 #if CONFIG_STATUS_SCREEN_ENABLE
     ESP_LOGI(TAG, "init");
+
+    if (!s_panel_mu) {
+        s_panel_mu = xSemaphoreCreateMutex();
+        if (!s_panel_mu) {
+            ESP_LOGE(TAG, "panel mutex alloc failed");
+        }
+    }
 
     ESP_LOGI(TAG, "init QSPI bus");
     const spi_bus_config_t buscfg = SH8601_PANEL_BUS_QSPI_CONFIG(

@@ -41,6 +41,10 @@ class SonyaWatchBleClient(
 
     private var scannerCallback: ScanCallback? = null
     private var gatt: BluetoothGatt? = null
+    // Standing background reconnect (autoConnect=true) to the last known address.
+    // Handled by the Android BLE stack itself instead of our own scan timer, so it
+    // keeps working under deep Doze/app-standby when postDelayed() loops get throttled.
+    private var bgGatt: BluetoothGatt? = null
     private var service: BluetoothGattService? = null
     private var rxChar: BluetoothGattCharacteristic? = null
     private var txChar: BluetoothGattCharacteristic? = null
@@ -84,13 +88,38 @@ class SonyaWatchBleClient(
         if (!enabled) {
             cancelAutoRunnables()
             stopScanIfRunning(reason = "auto_disabled")
+            disarmBackgroundAutoConnect()
             // Do NOT disconnect an active connection here; user may want to keep it.
             autoPolicy.reset()
             log("auto: disabled")
             return
         }
         log("auto: enabled (${autoPolicy.describe()})")
+        tryArmBackgroundAutoConnect()
         kickAutoConnectNow()
+    }
+
+    // See field comment on bgGatt. Idempotent: no-op if already armed/connected.
+    @SuppressLint("MissingPermission")
+    private fun tryArmBackgroundAutoConnect() {
+        if (!autoEnabled || connected || bgGatt != null) return
+        val addr = prefs.getString(prefKeyLastAddr, null) ?: return
+        val adapter = getAdapter() ?: return
+        if (!adapter.isEnabled || !hasBlePermissionsForScanAndConnect()) return
+        try {
+            val dev = adapter.getRemoteDevice(addr)
+            log("auto: arm background autoConnect addr=$addr")
+            bgGatt = dev.connectGatt(appCtx, true, gattCb, BluetoothDevice.TRANSPORT_LE)
+        } catch (t: Throwable) {
+            log("auto: background autoConnect arm failed: ${t.message}")
+        }
+    }
+
+    private fun disarmBackgroundAutoConnect() {
+        val g = bgGatt ?: return
+        bgGatt = null
+        try { g.disconnect() } catch (_: Throwable) {}
+        try { g.close() } catch (_: Throwable) {}
     }
 
     fun kickAutoConnectNow() {
@@ -106,6 +135,7 @@ class SonyaWatchBleClient(
             autoEnabled = false
             cancelAutoRunnables()
         }
+        disarmBackgroundAutoConnect()
 
         // Invalidate any in-flight scan callbacks and pending "connect once" gate.
         scanSessionId.incrementAndGet()
@@ -222,6 +252,8 @@ class SonyaWatchBleClient(
                 setScanning(false)
                 scanStopRunnable?.let { mainHandler.removeCallbacks(it) }
                 scanStopRunnable = null
+                // One GATT client per device: drop pending autoConnect before a direct connect.
+                disarmBackgroundAutoConnect()
                 connectGatt(dev)
             }
 
@@ -373,8 +405,17 @@ class SonyaWatchBleClient(
                     saveLastAddr(gatt.device?.address)
                     if (servicesDiscoveryStarted) {
                         log("gatt: duplicate STATE_CONNECTED ignored")
+                        if (gatt != this@SonyaWatchBleClient.gatt) {
+                            try { gatt.disconnect() } catch (_: Throwable) {}
+                            try { gatt.close() } catch (_: Throwable) {}
+                        }
+                        if (gatt == bgGatt) bgGatt = null
                         return
                     }
+                    // Whichever path connected first (scan or background autoConnect)
+                    // becomes the live gatt; disarm the other to avoid a dangling duplicate.
+                    this@SonyaWatchBleClient.gatt = gatt
+                    if (gatt != bgGatt) disarmBackgroundAutoConnect() else bgGatt = null
                     servicesDiscoveryStarted = true
                     mtuRequested = false
                     try {
@@ -385,15 +426,20 @@ class SonyaWatchBleClient(
                     }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    setConnected(false)
-                    gattReady = false
-                    connecting.set(false)
-                    cancelConnectTimeout()
+                    val wasLive = this@SonyaWatchBleClient.gatt == gatt
+                    val wasBg = bgGatt == gatt
+                    if (wasLive) {
+                        setConnected(false)
+                        gattReady = false
+                        connecting.set(false)
+                        cancelConnectTimeout()
+                    }
                     try {
                         gatt.close()
                     } catch (_: Throwable) {
                     }
-                    if (this@SonyaWatchBleClient.gatt == gatt) {
+                    if (wasBg) bgGatt = null
+                    if (wasLive) {
                         this@SonyaWatchBleClient.gatt = null
                         service = null
                         rxChar = null
@@ -403,13 +449,11 @@ class SonyaWatchBleClient(
                         servicesDiscoveryStarted = false
                         notifyEnableRequested = false
                     }
-                    if (autoEnabled) {
-                        // Watch only fast-advertises for a few seconds right after a drop
-                        // (BLE_FAST_ADV_RECONNECT_MS); without our own fast scan window here,
-                        // the next scan uses the slow 6s/15s cadence and can easily miss that
-                        // window, making reconnect take anywhere from seconds to minutes.
+                    // Ignore DISCONNECTED from a GATT we closed ourselves (disarm/handoff).
+                    if (autoEnabled && (wasLive || wasBg)) {
                         triggerFastWindow("disconnect")
                         scheduleNextAutoTick(3_000L)
+                        mainHandler.post { tryArmBackgroundAutoConnect() }
                     }
                 }
             }
@@ -617,6 +661,7 @@ class SonyaWatchBleClient(
 
     private fun autoTick() {
         if (!autoEnabled) return
+        tryArmBackgroundAutoConnect()
         val plan = autoPolicy.plan()
         if (connected) {
             scheduleNextAutoTick(plan.intervalMs)
@@ -645,6 +690,12 @@ class SonyaWatchBleClient(
         }
 
         if (scannerCallback != null) {
+            scheduleNextAutoTick(plan.intervalMs)
+            return
+        }
+        // Known watch: Android keeps a standing autoConnect. Periodic scan is only
+        // a fast-window boost (watch advertises briefly after a drop).
+        if (bgGatt != null && !plan.fast) {
             scheduleNextAutoTick(plan.intervalMs)
             return
         }
