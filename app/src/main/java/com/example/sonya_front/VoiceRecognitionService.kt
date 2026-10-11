@@ -904,14 +904,20 @@ class VoiceRecognitionService : Service() {
             )
             try {
                 var resp = ApiClient.instance.sendCommand(req)
-                var unresolvedNoAiConnection = false
-                val shouldRetryNoAiConnection = tryScheduleDirectActionFromCommandResponse(resp, deviceId, originalText = item.text)
-                if (shouldRetryNoAiConnection) {
+                var parsed = parseCommandResponse(resp)
+                if (isNoAiConnection(parsed) && resp.isSuccessful) {
                     resp = ApiClient.instance.sendCommand(req)
-                    unresolvedNoAiConnection = tryScheduleDirectActionFromCommandResponse(resp, deviceId, originalText = item.text)
+                    parsed = parseCommandResponse(resp)
                 }
-                if (unresolvedNoAiConnection) {
-                    OfflineCommandCacheStore.markAttemptFailed(applicationContext, item.id, "AI недоступен (no_ai_connection)")
+                val scheduledIds = tryScheduleParsedCommand(parsed, deviceId, originalText = item.text)
+                val failReason = commandFailReason(
+                    httpOk = resp.isSuccessful,
+                    httpCode = resp.code(),
+                    parsed = parsed,
+                    scheduledIds = scheduledIds,
+                )
+                if (failReason != null) {
+                    OfflineCommandCacheStore.markAttemptFailed(applicationContext, item.id, failReason)
                     continue
                 }
                 if (resp.isSuccessful) {
@@ -1024,40 +1030,46 @@ class VoiceRecognitionService : Service() {
                 var resp = ApiClient.instance.sendCommand(request)
                 Log.d("API_CALL", "Command sent successfully: $request")
 
-                var unresolvedNoAiConnection = false
-                val shouldRetryNoAiConnection = tryScheduleDirectActionFromCommandResponse(resp, deviceId, originalText = text)
-                if (shouldRetryNoAiConnection) {
+                var parsed = parseCommandResponse(resp)
+                if (isNoAiConnection(parsed) && resp.isSuccessful) {
                     Log.w("API_CALL", "Received type=unknown,error=no_ai_connection -> retrying command once")
                     resp = ApiClient.instance.sendCommand(request)
-                    Log.d("API_CALL", "Retry command sent once for no_ai_connection")
-                    unresolvedNoAiConnection = tryScheduleDirectActionFromCommandResponse(resp, deviceId, originalText = text)
+                    parsed = parseCommandResponse(resp)
                 }
 
-                val finalResponseType = peekCommandResponseType(resp)
+                val scheduledIds = tryScheduleParsedCommand(parsed, deviceId, originalText = text)
+                val failReason = commandFailReason(httpOk = resp.isSuccessful, httpCode = resp.code(), parsed = parsed, scheduledIds = scheduledIds)
+                Log.i(
+                    "ACT",
+                    "command result source=$source http=${resp.code()} type='${parsed.type}' error='${parsed.error}' " +
+                        "why='${parsed.why}' scheduled=$scheduledIds fail=${failReason ?: "-"}",
+                )
 
-                if (unresolvedNoAiConnection) {
-                    broadcastStatusUpdate("Ошибка отправки: AI недоступен")
-                    broadcastHint("AI недоступен (no_ai_connection). Повтор не помог.")
+                if (failReason != null) {
+                    speakOnMain("Не смогла", queueMode = TextToSpeech.QUEUE_ADD)
+                    broadcastStatusUpdate("Не смогла: $failReason")
+                    broadcastHint(failReason)
                     if (fromWatch) broadcastWatchBackendResult(false)
-                } else if (resp.isSuccessful) {
-                    // Voice feedback: backend accepted the command ("поставилась в работу").
-                    vibrateVoiceAck()
-                    val commandOk = !isUnknownCommandType(finalResponseType)
-                    val spokenAck = if (commandOk) "Всё ОК" else "Не поняла, повторите"
-                    speakOnMain(spokenAck, queueMode = TextToSpeech.QUEUE_ADD)
-                    broadcastStatusUpdate("Команда отправлена")
-                    if (fromWatch) broadcastWatchBackendResult(commandOk)
                 } else {
-                    broadcastStatusUpdate("Ошибка отправки: HTTP ${resp.code()}")
-                    if (fromWatch) broadcastWatchBackendResult(false)
+                    vibrateVoiceAck()
+                    speakOnMain("Всё ОК", queueMode = TextToSpeech.QUEUE_ADD)
+                    broadcastStatusUpdate("Команда отправлена")
+                    if (fromWatch) broadcastWatchBackendResult(true)
                 }
 
-                // Pull pending actions right after the command is accepted by backend.
                 PendingActionsSync.syncNow(applicationContext, deviceId, reason = "after_command")
+                val active = ActiveActionsStore.getAll(applicationContext)
+                Log.i(
+                    "ACT",
+                    "after sync active=${active.size} " +
+                        active.joinToString { "id=${it.actionId}:${it.state}:trig=${it.triggerAtEpochMs}" },
+                )
             } catch (e: HttpException) {
                 val body = try { e.response()?.errorBody()?.string() } catch (_: Throwable) { null }
                 Log.e("API_CALL_ERROR", "HTTP ${e.code()} while sending command. errorBody=${body ?: "<empty>"} request=$request", e)
-                broadcastStatusUpdate("Ошибка отправки: HTTP ${e.code()}")
+                speakOnMain("Не смогла", queueMode = TextToSpeech.QUEUE_ADD)
+                broadcastStatusUpdate("Не смогла: HTTP ${e.code()}")
+                broadcastHint("HTTP ${e.code()}")
                 if (fromWatch) broadcastWatchBackendResult(false)
             } catch (e: IOException) {
                 Log.e("API_CALL_ERROR", "Network error while sending command. request=$request", e)
@@ -1066,54 +1078,91 @@ class VoiceRecognitionService : Service() {
                     request = request,
                     source = source,
                 )
-                broadcastStatusUpdate("Ошибка сети при отправке")
+                speakOnMain("Не смогла", queueMode = TextToSpeech.QUEUE_ADD)
+                broadcastStatusUpdate("Не смогла: нет сети")
                 broadcastHint("Нет интернета. Команда сохранена в Кеш.")
                 if (fromWatch) broadcastWatchBackendResult(false)
             } catch (e: Exception) {
                 Log.e("API_CALL_ERROR", "Unexpected error while sending command. request=$request", e)
-                broadcastStatusUpdate("Ошибка отправки команды")
+                speakOnMain("Не смогла", queueMode = TextToSpeech.QUEUE_ADD)
+                broadcastStatusUpdate("Не смогла: ошибка отправки")
+                broadcastHint(e.message ?: "ошибка отправки команды")
                 if (fromWatch) broadcastWatchBackendResult(false)
             }
         }
     }
 
-    private fun tryScheduleDirectActionFromCommandResponse(
-        resp: retrofit2.Response<okhttp3.ResponseBody>,
+    private data class CommandParse(
+        val type: String,
+        val time: String,
+        val text: String,
+        val error: String,
+        val why: String,
+        val id: Int?,
+        val raw: String,
+    )
+
+    private fun parseCommandResponse(resp: retrofit2.Response<okhttp3.ResponseBody>): CommandParse {
+        val raw = try { resp.body()?.string()?.trim() } catch (_: Throwable) { null }.orEmpty()
+        Log.i("API_CALL", "command raw response: '$raw'")
+        if (raw.isBlank() || raw == "null") {
+            return CommandParse("", "", "", "", "", null, raw)
+        }
+        return try {
+            val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
+            val env = moshi.adapter(CommandResponseEnvelope::class.java).fromJson(raw)
+            val a = env?.intent
+            CommandParse(
+                type = (a?.type ?: env?.type)?.trim().orEmpty(),
+                time = (a?.time ?: env?.time)?.trim().orEmpty(),
+                text = (a?.text ?: env?.text)?.trim().orEmpty(),
+                error = (a?.error ?: env?.error)?.trim().orEmpty(),
+                why = (a?.why ?: env?.why)?.trim().orEmpty(),
+                id = a?.id ?: env?.id,
+                raw = raw,
+            )
+        } catch (t: Throwable) {
+            Log.w("API_CALL", "parseCommandResponse failed: ${t.message}")
+            CommandParse("", "", "", "", "", null, raw)
+        }
+    }
+
+    private fun isNoAiConnection(parsed: CommandParse): Boolean {
+        return parsed.error.equals("no_ai_connection", ignoreCase = true) ||
+            (isUnknownCommandType(parsed.type) && parsed.error.equals("no_ai_connection", ignoreCase = true))
+    }
+
+    private fun isSchedulableCommandType(type: String): Boolean {
+        return type.trim().lowercase() in setOf("timer", "text-timer", "approx-alarm", "alarm")
+    }
+
+    private fun commandFailReason(
+        httpOk: Boolean,
+        httpCode: Int,
+        parsed: CommandParse,
+        scheduledIds: List<Int>,
+    ): String? {
+        if (!httpOk) return "HTTP $httpCode"
+        if (isNoAiConnection(parsed)) return "AI недоступен (no_ai_connection)"
+        if (isUnknownCommandType(parsed.type) || parsed.type.isBlank()) {
+            return parsed.why.ifBlank { parsed.error.ifBlank { "команда не распознана" } }
+        }
+        if (isSchedulableCommandType(parsed.type) && scheduledIds.isEmpty()) {
+            return "не удалось поставить в Активные (type=${parsed.type} id=${parsed.id} time=${parsed.time})"
+        }
+        return null
+    }
+
+    private fun tryScheduleParsedCommand(
+        parsed: CommandParse,
         deviceId: String,
         originalText: String,
-    ): Boolean {
+    ): List<Int> {
         try {
-            if (!resp.isSuccessful) {
-                Log.d("API_CALL", "tryScheduleDirectAction: response not successful (${resp.code()}), skip")
-                return false
-            }
-            val raw = try { resp.body()?.string() } catch (_: Throwable) { null } ?: return false
-            val trimmed = raw.trim()
-            Log.i("API_CALL", "tryScheduleDirectAction raw response: '$trimmed'")
-            if (trimmed.isBlank() || trimmed == "null") {
-                Log.d("API_CALL", "tryScheduleDirectAction: blank/null body, skip")
-                return false
-            }
-
-            val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
-            val adapter = moshi.adapter(CommandResponseAction::class.java)
-            val parsed = try { adapter.fromJson(trimmed) } catch (e: Throwable) {
-                Log.w("API_CALL", "tryScheduleDirectAction: parse failed: ${e.message}")
-                null
-            } ?: return false
-
-            val type = parsed.type?.trim().orEmpty()
-            val time = parsed.time?.trim().orEmpty()
-            val error = parsed.error?.trim().orEmpty()
-            Log.i("API_CALL", "tryScheduleDirectAction parsed: id=${parsed.id} type='$type' time='$time' text='${parsed.text}' error='$error'")
-            if (isUnknownCommandType(type) && error.lowercase() == "no_ai_connection") {
-                Log.w("API_CALL", "Direct response reports no_ai_connection")
-                return true
-            }
-            if (type.isBlank() || time.isBlank()) {
-                Log.d("API_CALL", "tryScheduleDirectAction: type or time blank, skip")
-                return false
-            }
+            if (isNoAiConnection(parsed) || isUnknownCommandType(parsed.type)) return emptyList()
+            if (parsed.type.isBlank() || parsed.time.isBlank()) return emptyList()
+            val type = parsed.type
+            val time = parsed.time
             val normalizedTime = normalizeApproxAlarmTimeForNightRule(
                 type = type,
                 rawTime = time,
@@ -1121,10 +1170,12 @@ class VoiceRecognitionService : Service() {
             )
 
             val actionId = parsed.id ?: 0
+            if (actionId > 0 && PendingActionStore.isScheduled(applicationContext, actionId)) {
+                Log.i("ACT", "already scheduled id=$actionId type=$type")
+                return listOf(actionId)
+            }
             if (actionId <= 0) {
                 Log.e("API_CALL", "Backend returned direct action without valid id (type=$type time=$time). Skipping schedule.")
-                broadcastHint("Ошибка: сервер прислал задачу без id (type=$type). Задача отменена.")
-                // Report to backend as cancellation with reason (actionId=0 is an error-report convention).
                 if (deviceId.isNotBlank()) {
                     serviceScope.launch {
                         try {
@@ -1138,7 +1189,7 @@ class VoiceRecognitionService : Service() {
                                         "error" to "direct /command action id must be > 0",
                                         "received_type" to type,
                                         "received_time" to time,
-                                        "received_text" to (parsed.text ?: ""),
+                                        "received_text" to parsed.text,
                                     )
                                 )
                             )
@@ -1147,21 +1198,22 @@ class VoiceRecognitionService : Service() {
                         }
                     }
                 }
-                return false
+                return emptyList()
             }
 
             val pa = PendingAction(
                 id = actionId,
                 type = type,
                 time = normalizedTime,
-                text = parsed.text,
+                text = parsed.text.ifBlank { null },
             )
             val scheduledIds = PendingActionsScheduler.scheduleAll(applicationContext, deviceId, listOf(pa))
+            Log.i("ACT", "direct schedule id=$actionId type=$type time=$normalizedTime scheduled=$scheduledIds")
             maybeMirrorApproxAlarmToTasks(
                 deviceId = deviceId,
                 actionType = type,
                 dueAt = normalizedTime,
-                taskText = (parsed.text ?: originalText).trim(),
+                taskText = parsed.text.ifBlank { originalText }.trim(),
             )
             // ACK each action scheduled via direct command response.
             // Without this, backend status stays "pending" forever since syncNow won't see it in /pending-actions.
@@ -1187,10 +1239,10 @@ class VoiceRecognitionService : Service() {
                     }
                 }
             }
-            return false
+            return scheduledIds
         } catch (t: Throwable) {
             Log.w("API_CALL", "Direct-action parse/schedule failed: ${t.message}")
-            return false
+            return emptyList()
         }
     }
 
@@ -1219,20 +1271,6 @@ class VoiceRecognitionService : Service() {
     private fun isUnknownCommandType(type: String?): Boolean {
         val normalized = type?.trim()?.lowercase().orEmpty()
         return normalized == "unknown" || normalized == "unkown"
-    }
-
-    private fun peekCommandResponseType(
-        resp: retrofit2.Response<okhttp3.ResponseBody>
-    ): String? {
-        return try {
-            val rawBody = resp.raw().peekBody(64 * 1024).string().trim()
-            if (rawBody.isBlank() || rawBody == "null") return null
-            val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
-            val envelope = moshi.adapter(CommandResponseEnvelope::class.java).fromJson(rawBody)
-            envelope?.intent?.type ?: envelope?.type
-        } catch (_: Throwable) {
-            null
-        }
     }
 
     private fun maybeMirrorApproxAlarmToTasks(

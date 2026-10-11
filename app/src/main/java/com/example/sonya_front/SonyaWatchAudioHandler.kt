@@ -663,6 +663,7 @@ class SonyaWatchAudioHandler(
                 }.trim()
 
                 if (text.isNotBlank()) {
+                    Log.i("ACT", "watch transcript='$text'")
                     callbacks.broadcastLog("watch transcript: '$text'")
                     callbacks.broadcastTranscript(text)
                     try {
@@ -673,12 +674,14 @@ class SonyaWatchAudioHandler(
                             putExtra(VoiceRecognitionService.EXTRA_RECOGNIZED_SOURCE, "watch_vosk")
                         }
                         callbacks.broadcastStatus("Часы: отправляю команду на сервер")
+                        Log.i("ACT", "watch dispatch text='$text' source=watch_vosk")
                         ContextCompat.startForegroundService(ctx, intent)
                     } catch (t: Throwable) {
                         callbacks.broadcastLog("backend command failed: ${t.javaClass.simpleName}: ${t.message}")
                         callbacks.broadcastStatus("Часы: ошибка отправки команды")
                     }
                 } else {
+                    Log.i("ACT", "watch transcript blank, command not sent")
                     callbacks.broadcastLog("watch transcript: <blank>")
                     callbacks.broadcastStatus("Часы: речь не распознана, команда не отправлена")
                     callbacks.broadcastTranscript("")

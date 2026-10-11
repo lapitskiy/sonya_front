@@ -29,6 +29,10 @@ object ActiveActionsStore {
         val idx = list.indexOfFirst { it.actionId == item.actionId }
         if (idx >= 0) list[idx] = item else list.add(item)
         save(ctx, list)
+        AppLog.i(
+            "ACT",
+            "store upsert id=${item.actionId} type=${item.type} state=${item.state} trigger=${item.triggerAtEpochMs} total=${list.size}",
+        )
     }
 
     fun remove(ctx: Context, actionId: Int) {

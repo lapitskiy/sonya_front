@@ -188,19 +188,28 @@ object AppLog {
                 .put("lines", lines)
                 .toString()
 
-            val request = Request.Builder()
-                .url(ApiClient.baseUrl + UPLOAD_PATH)
-                .post(json.toRequestBody("application/json; charset=utf-8".toMediaType()))
-                .build()
-
-            uploadClient.newCall(request).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    android.util.Log.w(INTERNAL_TAG, "log upload failed: HTTP ${resp.code}")
-                    return false
+            val media = "application/json; charset=utf-8".toMediaType()
+            var lastError = "no base"
+            for (base in ApiClient.logUploadBases()) {
+                try {
+                    val request = Request.Builder()
+                        .url(base + UPLOAD_PATH)
+                        .post(json.toRequestBody(media))
+                        .build()
+                    uploadClient.newCall(request).execute().use { resp ->
+                        if (!resp.isSuccessful) {
+                            lastError = "HTTP ${resp.code} base=$base"
+                            return@use
+                        }
+                        uploadedSeq = batch.last().seq
+                        return true
+                    }
+                } catch (t: Throwable) {
+                    lastError = "${t.javaClass.simpleName}: ${t.message} base=$base"
                 }
             }
-            uploadedSeq = batch.last().seq
-            true
+            android.util.Log.w(INTERNAL_TAG, "log upload failed: $lastError")
+            false
         } catch (t: Throwable) {
             android.util.Log.w(INTERNAL_TAG, "log upload error: ${t.javaClass.simpleName}: ${t.message}")
             false

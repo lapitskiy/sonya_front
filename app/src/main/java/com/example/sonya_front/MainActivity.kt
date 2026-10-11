@@ -79,8 +79,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.luminance
 import androidx.core.content.ContextCompat
 import com.example.sonya_front.ui.theme.Sonya_frontTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToLong
 import java.time.Instant
 import java.time.LocalDate
@@ -510,7 +512,7 @@ class MainActivity : ComponentActivity() {
 
 private enum class AppTab { Status, Day, Tasks, Profile, Watch }
 
-private enum class SettingsPage { Root, Interaction, System }
+private enum class SettingsPage { Root, Interaction, System, Ai }
 
 private enum class RequestFilter(val label: String) {
     PENDING("Ожидание"),
@@ -645,6 +647,7 @@ private fun SettingsScreen(
                     SettingsPage.Root -> "Настройки"
                     SettingsPage.Interaction -> "Взаимодействие"
                     SettingsPage.System -> "Система"
+                    SettingsPage.Ai -> "AI"
                 },
                 fontSize = 22.sp
             )
@@ -663,6 +666,13 @@ private fun SettingsScreen(
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text("Система", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                     Button(onClick = { page = SettingsPage.System }) { Text("Открыть", fontSize = 12.sp) }
+                }
+
+                Divider(modifier = Modifier.padding(vertical = 12.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text("AI", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    Button(onClick = { page = SettingsPage.Ai }) { Text("Открыть", fontSize = 12.sp) }
                 }
 
                 Divider(modifier = Modifier.padding(vertical = 12.dp))
@@ -699,7 +709,99 @@ private fun SettingsScreen(
                     Button(onClick = onOpenExactAlarms) { Text("Открыть", fontSize = 12.sp) }
                 }
             }
+
+            SettingsPage.Ai -> {
+                AiProviderSettings()
+            }
         }
+    }
+}
+
+private fun aiProviderLabel(raw: String): String {
+    return when (raw.trim().lowercase()) {
+        "gigachat" -> "GigaChat"
+        "yandex" -> "YandexGPT"
+        else -> raw
+    }
+}
+
+@Composable
+private fun AiProviderSettings() {
+    val scope = rememberCoroutineScope()
+    var loading by remember { mutableStateOf(true) }
+    var saving by remember { mutableStateOf(false) }
+    var current by remember { mutableStateOf("") }
+    var available by remember { mutableStateOf(listOf("gigachat", "yandex")) }
+    var ready by remember { mutableStateOf(mapOf<String, Boolean>()) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    fun reload() {
+        scope.launch {
+            loading = true
+            error = null
+            try {
+                val resp = withContext(Dispatchers.IO) { ApiClient.instance.getAiProvider() }
+                current = resp.provider.orEmpty()
+                if (resp.available.isNotEmpty()) available = resp.available
+                ready = resp.ready
+            } catch (t: Throwable) {
+                error = t.message ?: "не удалось загрузить провайдер"
+            } finally {
+                loading = false
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) { reload() }
+
+    if (loading) {
+        Text("Загрузка…", fontSize = 14.sp, color = Color.Gray)
+        return
+    }
+    Text("Провайдер NLU", fontSize = 14.sp, color = Color.Gray)
+    Text("Сейчас: ${aiProviderLabel(current).ifBlank { "не задан" }}", fontSize = 16.sp, modifier = Modifier.padding(top = 8.dp))
+    available.forEach { p ->
+        val isReady = ready[p] == true
+        val isCurrent = p.equals(current, ignoreCase = true)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
+        ) {
+            Text(
+                text = aiProviderLabel(p) + if (isReady) "" else " (нет ключа)",
+                modifier = Modifier.weight(1f),
+                fontSize = 16.sp
+            )
+            Button(
+                onClick = {
+                    scope.launch {
+                        saving = true
+                        error = null
+                        try {
+                            val resp = withContext(Dispatchers.IO) {
+                                ApiClient.instance.setAiProvider(AiProviderSetRequest(p))
+                            }
+                            current = resp.provider.orEmpty()
+                            ready = resp.ready
+                        } catch (t: Throwable) {
+                            error = if (t is retrofit2.HttpException) {
+                                t.response()?.errorBody()?.string()?.ifBlank { null } ?: t.message()
+                            } else {
+                                t.message ?: "не удалось переключить"
+                            }
+                        } finally {
+                            saving = false
+                        }
+                    }
+                },
+                enabled = !saving && !isCurrent
+            ) {
+                Text(if (isCurrent) "Выбран" else "Выбрать", fontSize = 12.sp)
+            }
+        }
+    }
+    if (!error.isNullOrBlank()) {
+        Text(error ?: "", fontSize = 12.sp, color = Color(0xFFB00020), modifier = Modifier.padding(top = 10.dp))
     }
 }
 

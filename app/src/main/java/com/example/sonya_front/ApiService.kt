@@ -73,6 +73,7 @@ data class CommandResponseAction(
     val time: String? = null,
     val text: String? = null,
     val error: String? = null,
+    val why: String? = null,
 )
 
 data class CommandResponseEnvelope(
@@ -81,7 +82,18 @@ data class CommandResponseEnvelope(
     val time: String? = null,
     val text: String? = null,
     val error: String? = null,
+    val why: String? = null,
     val intent: CommandResponseAction? = null,
+)
+
+data class AiProviderResponse(
+    val provider: String? = null,
+    val available: List<String> = emptyList(),
+    val ready: Map<String, Boolean> = emptyMap(),
+)
+
+data class AiProviderSetRequest(
+    val provider: String,
 )
 
 data class PendingActionsResponse(
@@ -178,6 +190,12 @@ interface BackendApi {
         @Query("limit") limit: Int? = null,
         @Query("offset") offset: Int? = null,
     ): WhatSaidRequestsResponse
+
+    @GET("settings/ai-provider")
+    suspend fun getAiProvider(): AiProviderResponse
+
+    @PUT("settings/ai-provider")
+    suspend fun setAiProvider(@Body body: AiProviderSetRequest): AiProviderResponse
 }
 
 data class WhatSaidRequestsResponse(
@@ -219,6 +237,9 @@ object ApiClient {
 
     /** Базовый URL внешнего бэка (со слэшем на конце) — для запросов вне Retrofit (загрузка логов). */
     val baseUrl: String get() = EXTERNAL_BASE_URL
+
+    /** Куда AppLog шлёт POST /debug/app-log: сначала внешний, затем домашний. */
+    fun logUploadBases(): List<String> = listOf(EXTERNAL_BASE_URL, LOCAL_BASE_URL)
 
     private val moshi = Moshi.Builder()
         .add(KotlinJsonAdapterFactory())
@@ -435,6 +456,22 @@ object ApiClient {
                     endpoint = "/what-said/requests",
                     externalCall = { getWhatSaidRequests(deviceId, limit, offset) },
                     localCall = { getWhatSaidRequests(deviceId, limit, offset) }
+                )
+            }
+
+            override suspend fun getAiProvider(): AiProviderResponse {
+                return callWithFallback(
+                    endpoint = "/settings/ai-provider",
+                    externalCall = { getAiProvider() },
+                    localCall = { getAiProvider() }
+                )
+            }
+
+            override suspend fun setAiProvider(body: AiProviderSetRequest): AiProviderResponse {
+                return callWithFallback(
+                    endpoint = "PUT /settings/ai-provider",
+                    externalCall = { setAiProvider(body) },
+                    localCall = { setAiProvider(body) }
                 )
             }
         }
