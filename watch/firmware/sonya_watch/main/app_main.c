@@ -231,7 +231,12 @@ static void on_ble_rx(const uint8_t *data, uint16_t len, void *arg)
     int16_t tz_offset_min = 0;
     proto_cmd_t cmd = proto_parse_rx_cmd(data, len, &setrec_val, &rec_id, &off, &want_len,
                                          &time_epoch, &tz_offset_min);
-    power_mgr_mark_activity("BLE_RX");
+    // PING is a transport-level keepalive sent by the phone app every few seconds while
+    // connected; it must NOT count as idle activity, or the 30s auto-off timer would never
+    // fire while the app is simply alive and connected (see watch/md/архитектура-состояний.md).
+    if (cmd != PROTO_CMD_PING) {
+        power_mgr_mark_activity("BLE_RX");
+    }
 
     switch (cmd) {
     case PROTO_CMD_PING:

@@ -20,6 +20,7 @@ class PendingActionReceiver : BroadcastReceiver() {
 
                 val type = intent.getStringExtra(EXTRA_TYPE).orEmpty()
                 val label = intent.getStringExtra(EXTRA_TTS).orEmpty().ifBlank { "Событие" }
+                val rawText = intent.getStringExtra(EXTRA_RAW_TEXT)
                 val normalizedType = type.lowercase()
 
                 if (normalizedType == "timer") {
@@ -38,6 +39,7 @@ class PendingActionReceiver : BroadcastReceiver() {
                             scheduledAtEpochMs = System.currentTimeMillis(),
                             durationMs = null,
                             state = "ringing",
+                            rawText = rawText,
                         )
                     )
                     PendingActionsScheduler.cancelCountdownNotification(context, id)
@@ -76,6 +78,7 @@ class PendingActionReceiver : BroadcastReceiver() {
         const val EXTRA_ACTION_ID = "action_id"
         const val EXTRA_TYPE = "type"
         const val EXTRA_TTS = "tts"
+        const val EXTRA_RAW_TEXT = "raw_text"
         const val EXTRA_SOUND = "sound"
         const val EXTRA_VIBRATION = "vibration"
     }

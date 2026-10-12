@@ -51,6 +51,8 @@ data class PendingAction(
     // Some action types (e.g. "memory") may not carry time.
     val time: String? = null, // ISO-8601 duration (PT10S) or datetime with timezone (2026-01-29T09:00:00+03:00)
     val text: String? = null,
+    // Необработанный текст, полученный от распознавания голоса (до сжатия/нормализации нейросетью).
+    val rawText: String? = null,
     // Backend may send interest as number (0.8 / 80) or as string ("100%").
     val interest: Any? = null,
     @param:Json(name = "lat")

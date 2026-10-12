@@ -1206,6 +1206,7 @@ class VoiceRecognitionService : Service() {
                 type = type,
                 time = normalizedTime,
                 text = parsed.text.ifBlank { null },
+                rawText = originalText.ifBlank { null },
             )
             val scheduledIds = PendingActionsScheduler.scheduleAll(applicationContext, deviceId, listOf(pa))
             Log.i("ACT", "direct schedule id=$actionId type=$type time=$normalizedTime scheduled=$scheduledIds")

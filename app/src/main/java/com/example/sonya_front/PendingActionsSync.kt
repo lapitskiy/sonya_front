@@ -299,13 +299,13 @@ object PendingActionsSync {
                         "timer", "text-timer" -> {
                             val t = rawTime
                             if (t != null) {
-                                PendingAction(id = paId, type = ty, time = t, text = r.payload?.received?.text)
+                                PendingAction(id = paId, type = ty, time = t, text = r.payload?.received?.text, rawText = r.payload?.received?.text)
                             } else {
                                 val dueMs = parseEpochMs(rawDueAt)
                                 val nowMs = System.currentTimeMillis()
                                 val durMs = if (dueMs != null) (dueMs - nowMs).coerceAtLeast(0L) else null
                                 if (durMs != null && durMs > 0) {
-                                    PendingAction(id = paId, type = "timer", time = "PT${durMs / 1000L}S", text = r.payload?.received?.text)
+                                    PendingAction(id = paId, type = "timer", time = "PT${durMs / 1000L}S", text = r.payload?.received?.text, rawText = r.payload?.received?.text)
                                 } else null
                             }
                         }
@@ -313,7 +313,7 @@ object PendingActionsSync {
                         "time", "approx-alarm" -> {
                             val dueMs = parseEpochMs(rawDueAt)
                             if (dueMs != null) {
-                                PendingAction(id = paId, type = "approx-alarm", time = rawDueAt, text = r.payload?.received?.text)
+                                PendingAction(id = paId, type = "approx-alarm", time = rawDueAt, text = r.payload?.received?.text, rawText = r.payload?.received?.text)
                             } else null
                         }
                         else -> null

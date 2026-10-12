@@ -91,6 +91,7 @@ object PendingActionsScheduler {
                 putExtra(PendingActionReceiver.EXTRA_ACTION_ID, a.actionId)
                 putExtra(PendingActionReceiver.EXTRA_TYPE, a.type)
                 putExtra(PendingActionReceiver.EXTRA_TTS, a.label)
+                putExtra(PendingActionReceiver.EXTRA_RAW_TEXT, a.rawText)
                 putExtra(PendingActionReceiver.EXTRA_SOUND, defaultSound)
                 putExtra(PendingActionReceiver.EXTRA_VIBRATION, defaultVibration)
             }
@@ -321,6 +322,7 @@ object PendingActionsScheduler {
                     scheduledAtEpochMs = scheduledAtEpochMs,
                     durationMs = durationMsForUi,
                     state = "scheduled",
+                    rawText = a.rawText,
                 )
             )
 
@@ -359,6 +361,7 @@ object PendingActionsScheduler {
             putExtra(PendingActionReceiver.EXTRA_ACTION_ID, a.id)
             putExtra(PendingActionReceiver.EXTRA_TYPE, a.type)
             putExtra(PendingActionReceiver.EXTRA_TTS, defaultTts)
+            putExtra(PendingActionReceiver.EXTRA_RAW_TEXT, a.rawText)
             putExtra(PendingActionReceiver.EXTRA_SOUND, defaultSound)
             putExtra(PendingActionReceiver.EXTRA_VIBRATION, defaultVibration)
         }

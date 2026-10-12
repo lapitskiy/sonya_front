@@ -47,6 +47,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
@@ -1784,6 +1785,7 @@ fun StatusScreen(
                                         color = Color.Gray,
                                         modifier = Modifier.padding(top = 2.dp)
                                     )
+                                    RawTextToggle(rawText = a.rawText, label = a.label)
 
                     // Progress only for timers where we know duration.
                     val dur = a.durationMs
@@ -1819,6 +1821,7 @@ fun StatusScreen(
                                         color = Color.Gray,
                                         modifier = Modifier.padding(top = 2.dp)
                                     )
+                                    RawTextToggle(rawText = a.rawText, label = a.label)
 
                                     Row(modifier = Modifier.padding(top = 8.dp)) {
                                         Button(onClick = { onDone(a.actionId, a.type, a.label) }) {
@@ -1840,6 +1843,29 @@ fun StatusScreen(
                 }
             }
         }
+    }
+}
+
+/**
+ * Кнопка-раскрытие для просмотра исходного (необработанного нейросетью) текста голосовой команды.
+ * Показывается только если rawText есть и отличается от уже показанного label.
+ */
+@Composable
+private fun RawTextToggle(rawText: String?, label: String) {
+    val text = rawText?.trim().orEmpty()
+    if (text.isBlank() || text.equals(label.trim(), ignoreCase = true)) return
+
+    var expanded by remember { mutableStateOf(false) }
+    TextButton(onClick = { expanded = !expanded }, modifier = Modifier.padding(top = 2.dp)) {
+        Text(if (expanded) "Скрыть исходный текст" else "Исходный текст", fontSize = 12.sp)
+    }
+    if (expanded) {
+        Text(
+            text = text,
+            fontSize = 13.sp,
+            color = Color.LightGray,
+            modifier = Modifier.padding(start = 4.dp, top = 2.dp, bottom = 4.dp)
+        )
     }
 }
 

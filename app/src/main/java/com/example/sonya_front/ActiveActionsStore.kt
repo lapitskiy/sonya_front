@@ -20,6 +20,8 @@ object ActiveActionsStore {
         val scheduledAtEpochMs: Long,
         val durationMs: Long?, // only for timers
         val state: String = "scheduled", // scheduled | ringing
+        // Необработанный текст, полученный от распознавания голоса (до сжатия/нормализации нейросетью).
+        val rawText: String? = null,
     )
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -54,6 +56,7 @@ object ActiveActionsStore {
                     val scheduledAt = o.optLong("scheduled_at_epoch_ms", 0L)
                     val durationMs = if (o.has("duration_ms")) o.optLong("duration_ms", 0L).takeIf { it > 0L } else null
                     val state = o.optString("state", "scheduled").ifBlank { "scheduled" }
+                    val rawText = o.optString("raw_text", "").ifBlank { null }
                     if (id > 0 && type.isNotBlank() && trigger > 0L) {
                         add(
                             ActiveAction(
@@ -64,6 +67,7 @@ object ActiveActionsStore {
                                 scheduledAtEpochMs = if (scheduledAt > 0L) scheduledAt else (trigger - (durationMs ?: 0L)).coerceAtLeast(1L),
                                 durationMs = durationMs,
                                 state = state,
+                                rawText = rawText,
                             )
                         )
                     }
@@ -85,6 +89,7 @@ object ActiveActionsStore {
             o.put("scheduled_at_epoch_ms", a.scheduledAtEpochMs)
             a.durationMs?.let { o.put("duration_ms", it) }
             o.put("state", a.state)
+            a.rawText?.let { o.put("raw_text", it) }
             arr.put(o)
         }
         prefs(ctx).edit().putString(KEY_JSON, arr.toString()).apply()
